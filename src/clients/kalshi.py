@@ -13,86 +13,40 @@ class KalshiClient(BaseClient):
 
     BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
-    def __init__(self, api_key: str, api_secret: str, **kwargs):
+    def __init__(self, api_key: str = None, api_secret: str = None, **kwargs):
         """
         Initialize Kalshi client.
 
+        Note: As of 2026, Kalshi's market data endpoints are public and do not
+        require authentication. The api_key and api_secret parameters are kept
+        for backwards compatibility but are no longer used.
+
         Args:
-            api_key: Kalshi API key
-            api_secret: Kalshi API secret
+            api_key: (Deprecated) Kalshi API key - no longer required
+            api_secret: (Deprecated) Kalshi API secret - no longer required
             **kwargs: Additional arguments for BaseClient
         """
         super().__init__(platform_name="Kalshi", **kwargs)
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self._auth_token: str | None = None
-
-    async def _authenticate(self) -> bool:
-        """
-        Authenticate with Kalshi API.
-
-        Returns:
-            True if authentication successful, False otherwise
-        """
-        url = f"{self.BASE_URL}/login"
-        payload = {"email": self.api_key, "password": self.api_secret}
-
-        response = await self.fetch_with_retry("POST", url, json=payload)
-
-        if response is None:
-            logger.error("Kalshi: Authentication failed")
-            return False
-
-        try:
-            data = response.json()
-            self._auth_token = data.get("token")
-            if not self._auth_token:
-                logger.error("Kalshi: No token in authentication response")
-                return False
-
-            logger.info("Kalshi: Authentication successful")
-            return True
-
-        except Exception as e:
-            logger.error(f"Kalshi: Failed to parse auth response: {e}")
-            return False
-
-    async def _get_headers(self) -> dict[str, str]:
-        """
-        Get authentication headers for API requests.
-
-        Returns:
-            Headers dict with authorization token
-        """
-        if not self._auth_token:
-            await self._authenticate()
-
-        return {"Authorization": f"Bearer {self._auth_token}"}
+        # Note: Authentication is no longer required for public market data
+        # Kalshi has deprecated email/password login and made market data public
 
     async def get_active_markets(self) -> list[Market]:
         """
         Fetch active binary markets from Kalshi.
 
+        Note: As of 2026, this endpoint is public and does not require authentication.
+
         Returns:
             List of Market objects
         """
-        # Ensure we're authenticated
-        if not self._auth_token:
-            authenticated = await self._authenticate()
-            if not authenticated:
-                logger.error("Kalshi: Cannot fetch markets - authentication failed")
-                return []
-
-        # Fetch all active markets
+        # Fetch all active markets (public endpoint, no auth required)
         url = f"{self.BASE_URL}/markets"
         params = {
             "status": "open",
             "limit": 1000,  # Fetch up to 1000 markets
         }
 
-        response = await self.fetch_with_retry(
-            "GET", url, headers=await self._get_headers(), params=params
-        )
+        response = await self.fetch_with_retry("GET", url, params=params)
 
         if response is None:
             logger.error("Kalshi: Failed to fetch markets")

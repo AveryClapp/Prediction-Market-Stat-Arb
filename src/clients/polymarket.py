@@ -1,5 +1,6 @@
 """Polymarket API client implementation."""
 
+import json
 import logging
 from typing import Optional
 
@@ -66,56 +67,67 @@ class PolymarketClient(BaseClient):
             # Filter for binary markets and convert to standard format
             markets = []
             for m in markets_data:
-                # Skip non-binary markets (markets with more than 2 outcomes)
-                if not isinstance(m.get("tokens"), list) or len(m["tokens"]) != 2:
+                try:
+                    # Parse outcomes field (it's a JSON string)
+                    outcomes_raw = m.get("outcomes", "[]")
+                    if isinstance(outcomes_raw, str):
+                        outcomes = json.loads(outcomes_raw)
+                    else:
+                        outcomes = outcomes_raw
+
+                    # Skip non-binary markets (markets with more than 2 outcomes)
+                    if not isinstance(outcomes, list) or len(outcomes) != 2:
+                        continue
+
+                    # Skip inactive or closed markets
+                    if not m.get("active", False) or m.get("closed", False):
+                        continue
+
+                    # Parse outcome prices (also a JSON string)
+                    prices_raw = m.get("outcomePrices", "[]")
+                    if isinstance(prices_raw, str):
+                        outcome_prices = json.loads(prices_raw)
+                    else:
+                        outcome_prices = prices_raw
+
+                    if not outcome_prices or len(outcome_prices) != 2:
+                        continue
+
+                    # The first outcome is typically "Yes", get its price
+                    price = float(outcome_prices[0])
+
+                    # Ensure price is in valid range (0.01 to 0.99)
+                    price = max(0.01, min(0.99, price))
+
+                    # Get market description
+                    description = m.get("question", "")
+                    if not description:
+                        description = m.get("title", "")
+
+                    # Get market ID (conditionId is the primary identifier)
+                    market_id = m.get("conditionId", "")
+                    if not market_id:
+                        market_id = m.get("id", "")
+
+                    # Build market URL
+                    slug = m.get("slug", market_id)
+                    market_url = f"https://polymarket.com/event/{slug}"
+
+                    # Get close time (ISO format)
+                    close_time = m.get("endDateIso", "")
+
+                    market = Market(
+                        platform="Polymarket",
+                        market_id=str(market_id),
+                        description=description,
+                        price=price,
+                        url=market_url,
+                        close_time=close_time,
+                    )
+                    markets.append(market)
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    # Skip if parsing fails
                     continue
-
-                # Polymarket binary markets have two tokens (YES and NO)
-                # We want the price of the YES outcome
-                tokens = m["tokens"]
-
-                # Find the YES token (outcome token)
-                # Typically token 0 is YES and token 1 is NO, but check
-                yes_token = None
-                for token in tokens:
-                    if token.get("outcome", "").lower() in ["yes", "1", "true"]:
-                        yes_token = token
-                        break
-
-                # If we couldn't find explicit YES token, use first token
-                if yes_token is None:
-                    yes_token = tokens[0]
-
-                # Get the last price or mid price
-                price = yes_token.get("price", 0.5)
-
-                # Price should already be in 0-1 range, but ensure it
-                price = max(0.01, min(0.99, float(price)))
-
-                # Get market description
-                description = m.get("question", "")
-                if not description:
-                    description = m.get("title", "")
-
-                # Get market ID (condition_id or token_id)
-                market_id = m.get("condition_id", yes_token.get("token_id", ""))
-
-                # Build market URL
-                slug = m.get("slug", market_id)
-                market_url = f"https://polymarket.com/event/{slug}"
-
-                # Get close time
-                close_time = m.get("end_date_iso", "")
-
-                market = Market(
-                    platform="Polymarket",
-                    market_id=str(market_id),
-                    description=description,
-                    price=price,
-                    url=market_url,
-                    close_time=close_time,
-                )
-                markets.append(market)
 
             logger.info(f"Polymarket: Fetched {len(markets)} binary markets")
             return markets
