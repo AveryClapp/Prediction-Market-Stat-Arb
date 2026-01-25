@@ -56,7 +56,7 @@ class ArbitrageMonitor:
         )
 
         self.matcher = EventMatcher(
-            keyword_threshold=0.5,
+            keyword_threshold=0.2,  # Lowered from 0.5 based on real market data analysis
             semantic_threshold=self.config.thresholds.match_similarity,
         )
 
