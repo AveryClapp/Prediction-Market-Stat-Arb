@@ -211,3 +211,6 @@ __marimo__/
 
 # Project data
 data/
+
+# Configuration with API credentials
+config.yaml
