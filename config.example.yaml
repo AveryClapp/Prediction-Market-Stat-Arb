@@ -1,0 +1,64 @@
+# Prediction Market Arbitrage Detection - Configuration Example
+# Copy this file to config.yaml and fill in your API credentials
+
+api_keys:
+  # Kalshi API credentials
+  # Get them from: https://kalshi.com/account/api-keys
+  kalshi_api_key: "your-kalshi-email@example.com"
+  kalshi_api_secret: "your-kalshi-password"
+
+  # Polymarket API key (optional - not required for read-only operations)
+  polymarket_api_key: null
+
+fees:
+  kalshi:
+    # Current Kalshi fee structure (as of Jan 2026)
+    maker_fee_pct: 0.0      # No maker fee
+    taker_fee_pct: 3.0      # 3% taker fee
+    withdrawal_cost_usd: 0.0  # No withdrawal fee
+
+  polymarket:
+    # Polymarket costs (gas + bridge)
+    gas_fee_usd: 0.50        # Average Polygon gas cost
+    usdc_bridge_cost_usd: 1.00  # USDC bridge cost estimate
+    trading_fee_pct: 0.0     # No trading fee
+
+thresholds:
+  # Minimum net profit percentage to alert (after all fees)
+  min_profit_pct: 3.0
+
+  # Semantic similarity threshold for event matching (0-1)
+  # Higher = more conservative matching
+  match_similarity: 0.90
+
+# Capital tier configuration for tiered alerts
+capital_tiers:
+  - max: 5000
+    name: "Small"
+    color: "green"
+
+  - max: 20000
+    name: "Medium"
+    color: "yellow"
+
+  - max: 999999999
+    name: "Large"
+    color: "red"
+
+discord:
+  # Discord webhook URL for alerts
+  # Create one in your Discord server: Server Settings -> Integrations -> Webhooks
+  webhook_url: "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+
+  # Enable/disable Discord alerts
+  enabled: true
+
+polling:
+  # Polling cycle interval in seconds
+  interval_seconds: 60
+
+  # Maximum retry attempts before marking platform as down
+  max_retries: 3
+
+  # Exponential backoff base (delay = base^attempt)
+  backoff_base: 2
