@@ -78,10 +78,19 @@ class ArbitrageMonitor:
     async def cleanup(self):
         logger.info("Cleaning up...")
 
-        await self.kalshi_client.close()
-        await self.predictit_client.close()
-        await self.discord.close()
-        await self.database.close()
+        # Fast cleanup with timeouts
+        async def safe_close(coro, name):
+            try:
+                await asyncio.wait_for(coro, timeout=0.5)
+            except asyncio.TimeoutError:
+                logger.warning(f"{name} cleanup timed out")
+            except Exception as e:
+                logger.warning(f"{name} cleanup error: {e}")
+
+        await safe_close(self.kalshi_client.close(), "Kalshi")
+        await safe_close(self.predictit_client.close(), "PredictIt")
+        await safe_close(self.discord.close(), "Discord")
+        await safe_close(self.database.close(), "Database")
         self.ui.stop()
 
         logger.info("Cleanup complete")
@@ -268,6 +277,8 @@ class ArbitrageMonitor:
 
             # Wait until next cycle with live progress bar
             for i in range(int(wait_time)):
+                if not self.running:
+                    break
                 await asyncio.sleep(1)
                 self.ui.set_cycle_progress(int(cycle_duration) + i)
                 self.ui.update()
@@ -296,6 +307,7 @@ class ArbitrageMonitor:
 
 async def main():
     monitor = ArbitrageMonitor()
+    monitor_task = None
 
     # Handle graceful shutdown
     loop = asyncio.get_event_loop()
@@ -303,11 +315,17 @@ async def main():
     def signal_handler():
         logger.info("Shutdown signal received")
         monitor.stop()
+        if monitor_task:
+            monitor_task.cancel()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, signal_handler)
 
-    await monitor.run()
+    monitor_task = asyncio.create_task(monitor.run())
+    try:
+        await monitor_task
+    except asyncio.CancelledError:
+        logger.info("Monitor task cancelled")
 
 
 if __name__ == "__main__":

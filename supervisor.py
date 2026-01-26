@@ -148,7 +148,7 @@ class ProcessSupervisor:
             logger.info("Terminating child process...")
             try:
                 self.process.terminate()
-                self.process.wait(timeout=10)
+                self.process.wait(timeout=1)
                 logger.info("Child process terminated")
             except subprocess.TimeoutExpired:
                 logger.warning("Child process did not terminate, killing...")
