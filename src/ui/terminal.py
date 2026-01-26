@@ -57,8 +57,9 @@ class TerminalUI:
         self.live = Live(
             self._render(),
             console=self.console,
-            refresh_per_second=1,
+            refresh_per_second=4,  # Refresh 4 times per second for smooth updates
             screen=True,
+            auto_refresh=True,  # Enable automatic refreshing
         )
         self.live.start()
 

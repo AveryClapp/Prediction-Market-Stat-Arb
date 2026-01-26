@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 from sentence_transformers import SentenceTransformer
@@ -9,6 +10,37 @@ from ..clients.base import Market
 from .normalizer import calculate_keyword_overlap, normalize_text
 
 logger = logging.getLogger(__name__)
+
+
+def parse_close_time(close_time_str: str) -> Optional[datetime]:
+    """Parse close time string to datetime. Returns None if parsing fails."""
+    if not close_time_str:
+        return None
+
+    try:
+        # Try ISO format first (Kalshi uses this)
+        return datetime.fromisoformat(close_time_str.replace('Z', '+00:00'))
+    except:
+        try:
+            # Try common formats
+            for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+                return datetime.strptime(close_time_str, fmt)
+        except:
+            return None
+
+
+def markets_expire_within_days(market1: Market, market2: Market, max_days_diff: int = 14) -> bool:
+    """Check if two markets expire within max_days_diff days of each other."""
+    time1 = parse_close_time(market1.close_time)
+    time2 = parse_close_time(market2.close_time)
+
+    # If we can't parse either time, be conservative and reject the match
+    if time1 is None or time2 is None:
+        logger.debug(f"Could not parse close times: {market1.close_time} vs {market2.close_time}")
+        return False
+
+    diff_days = abs((time1 - time2).days)
+    return diff_days <= max_days_diff
 
 
 @dataclass
@@ -101,6 +133,7 @@ class EventMatcher:
             List of EventMatch objects with similarity >= semantic_threshold
         """
         matches = []
+        rejected_date_mismatch = 0
 
         for kalshi_market, polymarket_market, keyword_overlap in candidates:
             # Get normalized text
@@ -118,6 +151,16 @@ class EventMatcher:
 
             # Check if similarity meets threshold
             if similarity >= self.semantic_threshold:
+                # Filter out matches with significantly different expiration dates
+                if not markets_expire_within_days(kalshi_market, polymarket_market, max_days_diff=14):
+                    rejected_date_mismatch += 1
+                    logger.debug(
+                        f"Rejected match due to different expiration dates: "
+                        f"{kalshi_market.description[:50]} ({kalshi_market.close_time}) vs "
+                        f"{polymarket_market.description[:50]} ({polymarket_market.close_time})"
+                    )
+                    continue
+
                 match = EventMatch(
                     kalshi_market=kalshi_market,
                     polymarket_market=polymarket_market,
@@ -128,7 +171,7 @@ class EventMatcher:
                 matches.append(match)
 
         logger.info(
-            f"Phase 2: {len(matches)} matches found "
+            f"Phase 2: {len(matches)} matches found, {rejected_date_mismatch} rejected due to date mismatch "
             f"(threshold: {self.semantic_threshold})"
         )
 
