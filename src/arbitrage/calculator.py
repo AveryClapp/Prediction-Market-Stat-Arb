@@ -1,5 +1,3 @@
-"""Arbitrage calculation with fee accounting."""
-
 from dataclasses import dataclass
 from typing import Optional
 
@@ -8,59 +6,37 @@ from ..config import Config
 
 @dataclass
 class ArbitrageOpportunity:
-    """Arbitrage opportunity details."""
-
-    direction: str  # "buy_kalshi_sell_poly", "buy_poly_sell_kalshi", or "inverse_arbitrage"
-    net_profit_pct: float  # Net profit percentage after all fees
-    gross_profit_pct: float  # Profit before fees
-    required_capital: float  # Total capital needed
+    direction: str
+    net_profit_pct: float
+    gross_profit_pct: float
+    required_capital: float
     kalshi_price: float
     polymarket_price: float
-    kalshi_fees: float  # Total Kalshi fees in USD
-    polymarket_fees: float  # Total Polymarket fees in USD
-    total_fees: float  # All fees combined
-    is_profitable: bool  # True if net profit > 0
-    is_inverse: bool = False  # True if this is inverse arbitrage (opposite outcomes)
-    combined_cost: Optional[float] = None  # For inverse: combined cost of both positions
-    monitor_opportunity: bool = False  # True if close to profitable (within monitor threshold)
+    kalshi_fees: float
+    polymarket_fees: float
+    total_fees: float
+    is_profitable: bool
+    is_inverse: bool = False  # betting opposite outcomes
+    combined_cost: Optional[float] = None  # for inverse arb
+    monitor_opportunity: bool = False  # close to profitable
 
 
-def is_inverse_market(desc1: str, desc2: str, price1: float, price2: float) -> bool:
+def is_inverse_market(desc1, desc2, price1, price2):
     """
-    Detect if two market descriptions represent inverse/opposite outcomes.
-
-    Uses two strategies:
-    1. Price-based: If prices sum to ~1.0, likely inverse (one must win)
-    2. Pattern-based: Detects specific inverse patterns (political, yes/no, team sports, etc.)
-
-    Examples of inverse markets:
-    - Politics: "Democrats win" vs "Republicans win"
-    - Sports: "Team A wins" vs "Team B wins"
-    - Binary: "Yes" vs "No", "Over X" vs "Under X"
-    - General: Any two outcomes where prices sum to ~1.0
-
-    Args:
-        desc1: First market description
-        desc2: Second market description
-        price1: First market price (0-1)
-        price2: Second market price (0-1)
-
-    Returns:
-        True if markets appear to be inverses (opposite outcomes of same event)
+    Check if two markets are opposites (e.g. "Dems win" vs "Reps win").
+    Uses price sums (~1.0) and pattern matching.
     """
     desc1_lower = desc1.lower()
     desc2_lower = desc2.lower()
 
-    # Strategy 1: PRICE-BASED DETECTION (Universal)
-    # If two markets are truly inverse (one must win), their prices should sum to ~1.0
-    # Allow some slippage for market inefficiency (0.85-1.15)
+    # Price check: if prices sum to ~1.0, one must win
     price_sum = price1 + price2
     prices_suggest_inverse = 0.85 <= price_sum <= 1.15
 
-    # Strategy 2: PATTERN-BASED DETECTION (Specific patterns)
+    # Pattern matching for common inverse types
     pattern_suggests_inverse = False
 
-    # Pattern 1: Political parties (Democrat vs Republican)
+    # Political parties
     has_dem_1 = any(word in desc1_lower for word in ["democrat", "democratic", "democrats"])
     has_rep_1 = any(word in desc1_lower for word in ["republican", "republicans"])
     has_dem_2 = any(word in desc2_lower for word in ["democrat", "democratic", "democrats"])
@@ -71,13 +47,13 @@ def is_inverse_market(desc1: str, desc2: str, price1: float, price2: float) -> b
     elif (has_rep_1 and not has_dem_1 and has_dem_2 and not has_rep_2):
         pattern_suggests_inverse = True
 
-    # Pattern 2: Yes/No explicit markers
+    # Yes/No markers
     if (" - yes" in desc1_lower and " - no" in desc2_lower):
         pattern_suggests_inverse = True
     elif (" - no" in desc1_lower and " - yes" in desc2_lower):
         pattern_suggests_inverse = True
 
-    # Pattern 3: Over/Under
+    # Over/Under
     has_over_1 = "over" in desc1_lower
     has_under_1 = "under" in desc1_lower
     has_over_2 = "over" in desc2_lower
@@ -87,15 +63,6 @@ def is_inverse_market(desc1: str, desc2: str, price1: float, price2: float) -> b
         pattern_suggests_inverse = True
     elif (has_under_1 and not has_over_1 and has_over_2 and not has_under_2):
         pattern_suggests_inverse = True
-
-    # Pattern 4: Different specific outcomes in same question
-    # Look for markers like "- Option A" vs "- Option B"
-    # This catches categorical markets with explicit outcome labels
-
-    # DECISION LOGIC:
-    # If prices strongly suggest inverse (sum ~1.0), that's sufficient evidence
-    # OR if we detect a clear pattern, trust it
-    # Best: Both agree!
 
     if prices_suggest_inverse and pattern_suggests_inverse:
         return True  # Strong confidence - both signals agree

@@ -1,5 +1,3 @@
-"""Main orchestration loop for arbitrage detection system."""
-
 import asyncio
 import logging
 import signal
@@ -29,16 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 class ArbitrageMonitor:
-    """Main arbitrage detection and monitoring system."""
+    """Monitors prediction markets and detects arbitrage opportunities."""
 
-    def __init__(self, config_path: Path = Path("config.yaml")):
-        """
-        Initialize arbitrage monitor.
-
-        Args:
-            config_path: Path to configuration file
-        """
-        # Load configuration
+    def __init__(self, config_path=Path("config.yaml")):
         self.config = load_config(config_path)
 
         # Initialize components
@@ -70,53 +61,39 @@ class ArbitrageMonitor:
         self.cycle_count = 0
 
     async def initialize(self):
-        """Initialize all components."""
         logger.info("Initializing arbitrage monitor...")
 
-        # Connect to database
         await self.database.connect()
-
-        # Load historical stats
         stats = await self.database.get_historical_stats()
         self.ui.set_historical_stats(stats)
 
-        # Log filter configuration
         filter_summary = get_filter_summary(self.config.filters)
         logger.info(f"Event filters: {filter_summary}")
 
         logger.info("Initialization complete")
 
     async def cleanup(self):
-        """Cleanup resources."""
         logger.info("Cleaning up...")
 
-        # Close clients
         await self.kalshi_client.close()
         await self.predictit_client.close()
         await self.discord.close()
-
-        # Close database
         await self.database.close()
-
-        # Stop UI
         self.ui.stop()
 
         logger.info("Cleanup complete")
 
     async def _polling_cycle(self):
-        """Execute one polling cycle."""
         cycle_start = time()
         self.cycle_count += 1
 
         logger.info(f"=== Polling Cycle {self.cycle_count} ===")
         self.ui.add_log(f"Starting cycle {self.cycle_count}")
-
-        # Update cycle progress
         self.ui.set_cycle_progress(0)
         self.ui.update()
 
         try:
-            # Step 1: Poll Kalshi
+            # Poll Kalshi first
             logger.info("Polling Kalshi...")
             self.ui.add_log("Polling Kalshi...")
             kalshi_markets = await self.kalshi_client.get_active_markets()
@@ -125,13 +102,12 @@ class ArbitrageMonitor:
             self.ui.add_log(f"Kalshi: {len(kalshi_markets)} markets")
             self.ui.update()
 
-            # Check for platform down
             if kalshi_status.consecutive_failures >= self.config.polling.max_retries:
                 await self.discord.send_platform_down_alert(
                     "Kalshi", kalshi_status.consecutive_failures
                 )
 
-            # Step 2: Poll PredictIt
+            # Then poll PredictIt
             logger.info("Polling PredictIt...")
             self.ui.add_log("Polling PredictIt...")
             predictit_markets = await self.predictit_client.get_active_markets()
@@ -140,30 +116,26 @@ class ArbitrageMonitor:
             self.ui.add_log(f"PredictIt: {len(predictit_markets)} markets")
             self.ui.update()
 
-            # Check for platform down
-            if (
-                predictit_status.consecutive_failures
-                >= self.config.polling.max_retries
-            ):
+            if predictit_status.consecutive_failures >= self.config.polling.max_retries:
                 await self.discord.send_platform_down_alert(
                     "PredictIt", predictit_status.consecutive_failures
                 )
 
-            # Skip matching if either platform failed
+            # Can't match if we don't have data from both platforms
             if not kalshi_markets or not predictit_markets:
                 logger.warning("Skipping cycle due to empty market data")
                 self.ui.add_log("Skipping cycle - no market data")
                 self.ui.update()
                 return
 
-            # Step 3: Match events
+            # Find matching events across platforms
             logger.info("Matching events...")
             self.ui.add_log("Matching events...")
             self.ui.update()
             matches = self.matcher.match_events(kalshi_markets, predictit_markets)
             self.ui.add_log(f"Found {len(matches)} event matches")
 
-            # Step 3.5: Apply user filters
+            # Apply keyword filters if enabled
             if self.config.filters.enabled:
                 matches_before = len(matches)
                 matches = apply_filters(matches, self.config.filters)
@@ -171,7 +143,7 @@ class ArbitrageMonitor:
 
             self.ui.update()
 
-            # Step 4: Calculate arbitrage and find opportunities
+            # Check each match for arbitrage opportunities
             logger.info("Calculating arbitrage...")
             self.ui.add_log("Calculating arbitrage...")
             self.ui.update()
@@ -180,8 +152,7 @@ class ArbitrageMonitor:
             monitor_opportunities = []
 
             for match in matches:
-                # Try inverse arbitrage first (betting opposite outcomes)
-                # Note: polymarket_market field now contains PredictIt markets
+                # Try inverse arb first (betting opposite outcomes on each platform)
                 opportunity = calculate_inverse_arbitrage(
                     kalshi_price=match.kalshi_market.price,
                     polymarket_price=match.polymarket_market.price,
@@ -191,7 +162,7 @@ class ArbitrageMonitor:
                     platform2_name="PredictIt",
                 )
 
-                # If not inverse, try regular arbitrage
+                # Fall back to regular arbitrage if inverse doesn't work
                 if opportunity is None:
                     opportunity = calculate_arbitrage(
                         kalshi_price=match.kalshi_market.price,
@@ -200,14 +171,12 @@ class ArbitrageMonitor:
                     )
 
                 if opportunity and opportunity.is_profitable:
-                    # Get tier for this opportunity
                     tier = self.config.get_tier_for_capital(opportunity.required_capital)
 
                     opportunities.append(
                         (match.kalshi_market, match.polymarket_market, opportunity, tier)
                     )
 
-                    # Store in database
                     await self.database.insert_opportunity(
                         kalshi_market_id=match.kalshi_market.market_id,
                         polymarket_market_id=match.polymarket_market.market_id,
@@ -223,7 +192,6 @@ class ArbitrageMonitor:
                         similarity_score=match.similarity_score,
                     )
 
-                    # Send Discord alert
                     await self.discord.send_alert(
                         kalshi_market=match.kalshi_market,
                         polymarket_market=match.polymarket_market,
@@ -232,21 +200,18 @@ class ArbitrageMonitor:
                     )
 
                 elif opportunity and opportunity.monitor_opportunity:
-                    # Track near-profitable opportunities for monitoring
+                    # Not profitable yet, but close - worth keeping an eye on
                     tier = self.config.get_tier_for_capital(opportunity.required_capital)
-
                     monitor_opportunities.append(
                         (match.kalshi_market, match.polymarket_market, opportunity, tier)
                     )
 
-            # Update UI with opportunities
             self.ui.set_opportunities(opportunities)
             self.ui.add_log(f"Found {len(opportunities)} arbitrage opportunities")
 
             if monitor_opportunities:
                 self.ui.add_log(f"Monitoring {len(monitor_opportunities)} near-profitable opportunities")
 
-            # Update historical stats
             stats = await self.database.get_historical_stats()
             self.ui.set_historical_stats(stats)
 
@@ -272,7 +237,6 @@ class ArbitrageMonitor:
             self.ui.add_log(f"Error: {str(e)[:50]}")
 
         finally:
-            # Calculate time to wait before next cycle
             cycle_duration = time() - cycle_start
             wait_time = max(0, self.config.polling.interval_seconds - cycle_duration)
 
@@ -281,27 +245,21 @@ class ArbitrageMonitor:
                 f"Waiting {wait_time:.1f}s until next cycle."
             )
 
-            # Update UI during wait
             self.ui.update()
 
-            # Wait with progress updates
+            # Wait until next cycle with live progress bar
             for i in range(int(wait_time)):
                 await asyncio.sleep(1)
                 self.ui.set_cycle_progress(int(cycle_duration) + i)
                 self.ui.update()
 
     async def run(self):
-        """Run the main monitoring loop."""
         self.running = True
-
-        # Start UI
         self.ui.start()
 
         try:
-            # Initialize
             await self.initialize()
 
-            # Main loop
             while self.running:
                 await self._polling_cycle()
 
@@ -313,16 +271,14 @@ class ArbitrageMonitor:
             await self.cleanup()
 
     def stop(self):
-        """Stop the monitor."""
         logger.info("Stopping monitor...")
         self.running = False
 
 
 async def main():
-    """Main entry point."""
     monitor = ArbitrageMonitor()
 
-    # Setup signal handlers for graceful shutdown
+    # Handle graceful shutdown
     loop = asyncio.get_event_loop()
 
     def signal_handler():
@@ -332,7 +288,6 @@ async def main():
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, signal_handler)
 
-    # Run monitor
     await monitor.run()
 
 

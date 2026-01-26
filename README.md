@@ -1,11 +1,30 @@
-# Prediction Market Arbitrage Detection System
+# Prediction Market Arbitrage Detection
 
-A real-time arbitrage detection system that identifies risk-free profit opportunities across Kalshi and Polymarket prediction markets.
+![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Code Style](https://img.shields.io/badge/code%20style-clean-brightgreen.svg)
+
+A real-time arbitrage detection system that identifies risk-free profit opportunities across prediction markets.
+
+## Why This Project?
+
+Prediction markets like Kalshi and PredictIt often price the same events differently, creating arbitrage opportunities. This tool automatically detects these inefficiencies by:
+- Matching events across platforms using AI (semantic similarity)
+- Calculating net profit after all fees (trading fees, gas fees, bridge costs)
+- Alerting you in real-time via Discord and a live terminal dashboard
+
+Built to explore the intersection of prediction markets, natural language processing, and quantitative trading.
+
+## Supported Platforms
+
+Currently monitors: **Kalshi** and **PredictIt**
+
+_(Note: Polymarket client is included but not actively used. Easily extensible to other platforms.)_
 
 ## Features
 
-- **Automated Polling**: Fetches active binary markets from Kalshi and Polymarket every 60 seconds
-- **Intelligent Matching**: Hybrid two-phase event matching using keyword filtering + semantic similarity (90%+ confidence)
+- **Automated Polling**: Fetches active binary markets every 60 seconds
+- **Intelligent Matching**: Hybrid two-phase event matching using keyword filtering + semantic similarity (80%+ confidence)
 - **Accurate Profit Calculation**: Accounts for all fees including Kalshi maker/taker fees, Polymarket gas fees, and USDC bridge costs
 - **Tiered Alerting**: Discord webhook alerts with color-coded capital tiers (small/medium/large opportunities)
 - **Historical Tracking**: SQLite database stores all opportunities for analysis
@@ -14,8 +33,8 @@ A real-time arbitrage detection system that identifies risk-free profit opportun
 ## Requirements
 
 - Python 3.10+
-- Kalshi account with API credentials
-- (Optional) Discord webhook for alerts
+- Kalshi account with API credentials (free - get from [Kalshi](https://kalshi.com/account/api-keys))
+- Discord webhook (optional but recommended - for alerts)
 
 ## Installation
 
@@ -203,9 +222,19 @@ Arbitrage opportunities are fleeting and may only appear a few times per day.
 - **Matching speed**: Phase 1 filters 80-90% of pairs in <1s, Phase 2 semantic matching on remaining candidates
 - **Model download**: First run downloads sentence transformer model (~80MB)
 
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+Found a bug or have a feature idea? [Open an issue](../../issues).
+
 ## License
 
-MIT
+MIT - See [LICENSE](LICENSE) for details.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for version history and updates.
 
 ## Disclaimer
 

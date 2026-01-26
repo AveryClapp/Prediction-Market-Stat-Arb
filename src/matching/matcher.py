@@ -1,5 +1,3 @@
-"""Event matching engine with hybrid two-phase approach."""
-
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -15,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EventMatch:
-    """Matched event pair across platforms."""
-
     kalshi_market: Market
     polymarket_market: Market
     similarity_score: float
@@ -25,33 +21,16 @@ class EventMatch:
 
 
 class EventMatcher:
-    """Hybrid event matching using keyword filtering and semantic similarity."""
+    """Matches events across platforms using keywords + semantic similarity."""
 
-    def __init__(
-        self,
-        keyword_threshold: float = 0.2,
-        semantic_threshold: float = 0.80,
-        model_name: str = "all-MiniLM-L6-v2",
-    ):
-        """
-        Initialize event matcher.
-
-        Args:
-            keyword_threshold: Minimum keyword overlap to pass phase 1 (0-1)
-                Default 0.2 (20%) based on real-world market description differences
-            semantic_threshold: Minimum semantic similarity for match (0-1)
-                Default 0.80 (80%) - optimal balance of quality and quantity
-            model_name: Sentence transformer model name
-        """
+    def __init__(self, keyword_threshold=0.2, semantic_threshold=0.80, model_name="all-MiniLM-L6-v2"):
         self.keyword_threshold = keyword_threshold
         self.semantic_threshold = semantic_threshold
 
-        # Load sentence transformer model
         logger.info(f"Loading sentence transformer model: {model_name}")
         self.model = SentenceTransformer(model_name)
 
-        # Cache for embeddings to avoid recomputation
-        self._embedding_cache: dict[str, list[float]] = {}
+        self._embedding_cache = {}
 
     def _get_embedding(self, text: str) -> list[float]:
         """

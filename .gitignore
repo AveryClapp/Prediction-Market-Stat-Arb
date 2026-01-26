@@ -214,3 +214,9 @@ data/
 
 # Configuration with API credentials
 config.yaml
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/

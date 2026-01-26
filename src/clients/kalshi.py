@@ -1,5 +1,3 @@
-"""Kalshi API client implementation."""
-
 import asyncio
 import logging
 from datetime import datetime
@@ -10,45 +8,19 @@ logger = logging.getLogger(__name__)
 
 
 class KalshiClient(BaseClient):
-    """Client for Kalshi prediction market API."""
-
     BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
-    def __init__(self, api_key: str = None, api_secret: str = None, **kwargs):
-        """
-        Initialize Kalshi client.
-
-        Note: As of 2026, Kalshi's market data endpoints are public and do not
-        require authentication. The api_key and api_secret parameters are kept
-        for backwards compatibility but are no longer used.
-
-        Args:
-            api_key: (Deprecated) Kalshi API key - no longer required
-            api_secret: (Deprecated) Kalshi API secret - no longer required
-            **kwargs: Additional arguments for BaseClient
-        """
+    def __init__(self, api_key=None, api_secret=None, **kwargs):
         super().__init__(platform_name="Kalshi", **kwargs)
-        # Note: Authentication is no longer required for public market data
-        # Kalshi has deprecated email/password login and made market data public
+        # Kalshi made their market data public in 2026, no auth needed anymore
 
-    async def get_active_markets(self) -> list[Market]:
-        """
-        Fetch active binary markets from Kalshi.
-
-        Note: As of 2026, this endpoint is public and does not require authentication.
-
-        Strategy: Fetch events first, then get simple markets for each event.
-        This avoids MVE (multivariate/parlay) markets which cannot be matched
-        against simple binary markets from other platforms.
-
-        Returns:
-            List of Market objects
-        """
-        # Step 1: Fetch active events
+    async def get_active_markets(self):
+        """Get active markets from Kalshi. Filters out MVE/parlay markets."""
+        # Fetch events first
         events_url = f"{self.BASE_URL}/events"
         events_params = {
             "status": "open",
-            "limit": 200,  # Fetch up to 200 events
+            "limit": 200,
         }
 
         events_response = await self.fetch_with_retry("GET", events_url, params=events_params)
@@ -63,7 +35,7 @@ class KalshiClient(BaseClient):
 
             logger.info(f"Kalshi: Fetched {len(events)} events")
 
-            # Step 2: Fetch markets for each event
+            # Now fetch markets for each event
             all_markets = []
 
             for i, event in enumerate(events):
@@ -71,11 +43,10 @@ class KalshiClient(BaseClient):
                 if not event_ticker:
                     continue
 
-                # Add delay to avoid rate limiting
+                # Rate limiting
                 if i > 0:
-                    await asyncio.sleep(0.5)  # 500ms between requests
+                    await asyncio.sleep(0.5)
 
-                # Fetch markets for this specific event
                 markets_url = f"{self.BASE_URL}/markets"
                 markets_params = {
                     "status": "open",
@@ -91,28 +62,23 @@ class KalshiClient(BaseClient):
                 markets_data = markets_response.json()
                 event_markets = markets_data.get("markets", [])
 
-                # Process markets for this event
                 for m in event_markets:
-                    # Skip MVE (multivariate event / parlay) markets
+                    # Skip MVE (multivariate/parlay) markets
                     if m.get("mve_collection_ticker"):
                         continue
 
-                    # Skip non-binary markets
                     if m.get("market_type") != "binary":
                         continue
 
-                    # Get the "yes" price (last traded price or mid price)
-                    yes_price = m.get("yes_bid", 0.5)  # Default to 0.5 if no price
+                    # Get yes price - prefer last price, fall back to mid
+                    yes_price = m.get("yes_bid", 0.5)
                     if "last_price" in m and m["last_price"] is not None:
                         yes_price = m["last_price"]
                     elif "yes_ask" in m and "yes_bid" in m:
-                        # Use mid price if we have bid and ask
                         yes_price = (m["yes_ask"] + m["yes_bid"]) / 2
 
-                    # Kalshi prices are in cents (0-100), convert to 0-1 range
+                    # Kalshi uses cents, convert to 0-1
                     yes_price = yes_price / 100 if yes_price > 1 else yes_price
-
-                    # Ensure price is in valid range
                     yes_price = max(0.01, min(0.99, yes_price))
 
                     market = Market(
