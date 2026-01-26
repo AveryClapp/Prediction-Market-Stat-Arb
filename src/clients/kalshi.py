@@ -48,9 +48,9 @@ class KalshiClient(BaseClient):
                 if i > 0 and i % 20 == 0:
                     logger.info(f"Kalshi: Processing event {i}/{total_events}...")
 
-                # Rate limiting (reduced to speed up polling)
+                # Rate limiting (0.2s = ~200 events in 40s, avoids 429 errors)
                 if i > 0:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.2)
 
                 markets_url = f"{self.BASE_URL}/markets"
                 markets_params = {

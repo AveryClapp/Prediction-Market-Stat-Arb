@@ -154,6 +154,11 @@ class ArbitrageMonitor:
                 matches = apply_filters(matches, self.config.filters)
                 self.ui.add_log(f"Filtered: {matches_before} → {len(matches)} matches")
 
+            # Log if no matches found (for diagnostics)
+            if len(matches) == 0:
+                self.ui.add_log("No valid matches (all rejected by date filter)")
+                logger.info("No matches after date filtering - check logs for rejected examples")
+
             self.ui.update()
 
             # Check each match for arbitrage opportunities

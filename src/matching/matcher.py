@@ -175,6 +175,27 @@ class EventMatcher:
             f"(threshold: {self.semantic_threshold})"
         )
 
+        # Log some examples of rejected matches for diagnostics
+        if rejected_date_mismatch > 0 and len(matches) == 0:
+            logger.info("Examples of rejected matches (different expiration dates):")
+            count = 0
+            for kalshi_market, polymarket_market, _ in candidates[:5]:
+                kalshi_text = normalize_text(kalshi_market.description)
+                polymarket_text = normalize_text(polymarket_market.description)
+                kalshi_embedding = self._get_embedding(kalshi_text)
+                polymarket_embedding = self._get_embedding(polymarket_text)
+                similarity = cosine_similarity([kalshi_embedding], [polymarket_embedding])[0][0]
+
+                if similarity >= self.semantic_threshold:
+                    logger.info(
+                        f"  - Similarity {similarity:.2f}: {kalshi_market.description[:50]}... "
+                        f"({kalshi_market.close_time[:10]}) vs {polymarket_market.description[:50]}... "
+                        f"({polymarket_market.close_time[:10]})"
+                    )
+                    count += 1
+                    if count >= 3:
+                        break
+
         return matches
 
     def match_events(
