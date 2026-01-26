@@ -23,13 +23,23 @@ fees:
     usdc_bridge_cost_usd: 1.00  # USDC bridge cost estimate
     trading_fee_pct: 0.0     # No trading fee
 
+  predictit:
+    # PredictIt fee structure
+    profit_fee_pct: 10.0     # 10% fee on profits
+    withdrawal_fee_pct: 5.0  # 5% withdrawal fee
+
 thresholds:
   # Minimum net profit percentage to alert (after all fees)
   min_profit_pct: 3.0
 
   # Semantic similarity threshold for event matching (0-1)
   # Higher = more conservative matching
-  match_similarity: 0.90
+  # 0.80 provides high-quality matches while catching most true arbitrage opportunities
+  match_similarity: 0.80
+
+  # Near-arbitrage monitoring threshold (percentage points away from profitable)
+  # e.g., 2.0 means alert on opportunities within 2% of being profitable
+  monitor_threshold_pct: 2.0
 
 # Capital tier configuration for tiered alerts
 capital_tiers:
@@ -62,3 +72,43 @@ polling:
 
   # Exponential backoff base (delay = base^attempt)
   backoff_base: 2
+
+filters:
+  # Event filtering - focus on specific types of events
+  # Set enabled: true to activate filtering
+  enabled: false
+
+  # Filter mode:
+  #   "include" - Only monitor events matching the keywords (whitelist)
+  #   "exclude" - Monitor all events EXCEPT those matching keywords (blacklist)
+  mode: "include"
+
+  # Keywords to filter by (case-insensitive, partial matches)
+  # Leave empty [] to monitor all events
+  keywords: []
+
+  # EXAMPLES - Uncomment and modify as needed:
+
+  # Monitor only Senate races:
+  # keywords: ["senate", "senator"]
+
+  # Monitor only presidential markets:
+  # keywords: ["president", "presidential", "presidency"]
+
+  # Monitor all politics:
+  # keywords: ["senate", "house", "congress", "president", "governor", "election"]
+
+  # Monitor only Trump-related markets:
+  # keywords: ["trump", "donald trump"]
+
+  # Monitor sports:
+  # keywords: ["nba", "nfl", "mlb", "basketball", "football", "baseball"]
+
+  # Monitor crypto:
+  # keywords: ["bitcoin", "ethereum", "crypto", "btc", "eth"]
+
+  # Monitor entertainment:
+  # keywords: ["movie", "actor", "actress", "oscar", "film"]
+
+  # Multiple specific topics:
+  # keywords: ["senate", "nba", "bitcoin"]

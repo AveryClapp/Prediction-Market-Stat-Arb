@@ -30,7 +30,7 @@ class EventMatcher:
     def __init__(
         self,
         keyword_threshold: float = 0.2,
-        semantic_threshold: float = 0.90,
+        semantic_threshold: float = 0.80,
         model_name: str = "all-MiniLM-L6-v2",
     ):
         """
@@ -40,6 +40,7 @@ class EventMatcher:
             keyword_threshold: Minimum keyword overlap to pass phase 1 (0-1)
                 Default 0.2 (20%) based on real-world market description differences
             semantic_threshold: Minimum semantic similarity for match (0-1)
+                Default 0.80 (80%) - optimal balance of quality and quantity
             model_name: Sentence transformer model name
         """
         self.keyword_threshold = keyword_threshold

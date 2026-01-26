@@ -23,11 +23,19 @@ class PolymarketFees(BaseModel):
     trading_fee_pct: float = Field(ge=0, le=10)
 
 
+class PredictItFees(BaseModel):
+    """PredictIt fee structure."""
+
+    profit_fee_pct: float = Field(ge=0, le=100)  # 10% fee on profits
+    withdrawal_fee_pct: float = Field(ge=0, le=100)  # 5% withdrawal fee
+
+
 class Fees(BaseModel):
     """All platform fees."""
 
     kalshi: KalshiFees
     polymarket: PolymarketFees
+    predictit: PredictItFees
 
 
 class ApiKeys(BaseModel):
@@ -43,6 +51,7 @@ class Thresholds(BaseModel):
 
     min_profit_pct: float = Field(gt=0, le=100)
     match_similarity: float = Field(ge=0, le=1)
+    monitor_threshold_pct: float = Field(ge=0, le=10, default=2.0)
 
 
 class CapitalTier(BaseModel):
@@ -80,6 +89,20 @@ class Polling(BaseModel):
     backoff_base: float = Field(gt=1, le=10)
 
 
+class EventFilters(BaseModel):
+    """Event filtering configuration."""
+
+    enabled: bool = False
+    mode: str = Field(default="include", pattern="^(include|exclude)$")
+    keywords: list[str] = Field(default_factory=list)
+
+    @field_validator("keywords")
+    @classmethod
+    def normalize_keywords(cls, v: list[str]) -> list[str]:
+        """Normalize keywords to lowercase for case-insensitive matching."""
+        return [keyword.lower().strip() for keyword in v if keyword.strip()]
+
+
 class Config(BaseModel):
     """Main configuration model."""
 
@@ -89,6 +112,7 @@ class Config(BaseModel):
     capital_tiers: list[CapitalTier]
     discord: Discord
     polling: Polling
+    filters: EventFilters = Field(default_factory=EventFilters)
 
     @field_validator("capital_tiers")
     @classmethod
