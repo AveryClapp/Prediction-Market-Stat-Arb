@@ -53,6 +53,7 @@ class Database:
         if not self.db:
             raise RuntimeError("Database not connected")
 
+        # Existing arbitrage_opportunities table
         await self.db.execute(
             """
             CREATE TABLE IF NOT EXISTS arbitrage_opportunities (
@@ -76,6 +77,58 @@ class Database:
             """
         )
 
+        # New: Aggregated market snapshots per cycle
+        await self.db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS market_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                cycle_duration_ms INTEGER NOT NULL,
+                kalshi_markets_count INTEGER NOT NULL,
+                predictit_markets_count INTEGER NOT NULL,
+                total_matches INTEGER NOT NULL,
+                profitable_matches INTEGER NOT NULL,
+                near_miss_matches INTEGER NOT NULL,
+                inverse_opportunities INTEGER NOT NULL,
+                avg_price_correlation REAL,
+                avg_similarity_score REAL,
+                median_spread REAL,
+                kalshi_api_healthy BOOLEAN NOT NULL,
+                predictit_api_healthy BOOLEAN NOT NULL
+            )
+            """
+        )
+
+        # New: Detailed records for interesting matches
+        await self.db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS detailed_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                kalshi_market_id TEXT NOT NULL,
+                predictit_market_id TEXT NOT NULL,
+                event_description TEXT NOT NULL,
+                kalshi_price REAL NOT NULL,
+                predictit_price REAL NOT NULL,
+                gross_spread REAL NOT NULL,
+                net_profit_pct REAL NOT NULL,
+                similarity_score REAL NOT NULL,
+                match_quality TEXT NOT NULL,
+                required_capital REAL NOT NULL,
+                kalshi_fees REAL NOT NULL,
+                predictit_fees REAL NOT NULL,
+                total_fees REAL NOT NULL,
+                is_profitable BOOLEAN NOT NULL,
+                is_near_miss BOOLEAN NOT NULL,
+                is_inverse BOOLEAN NOT NULL,
+                direction TEXT NOT NULL,
+                kalshi_url TEXT NOT NULL,
+                predictit_url TEXT NOT NULL,
+                pair_hash TEXT NOT NULL
+            )
+            """
+        )
+
         # Create indexes for fast queries
         await self.db.execute(
             """
@@ -88,6 +141,34 @@ class Database:
             """
             CREATE INDEX IF NOT EXISTS idx_profit
             ON arbitrage_opportunities(net_profit_pct)
+            """
+        )
+
+        await self.db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_snapshot_timestamp
+            ON market_snapshots(timestamp)
+            """
+        )
+
+        await self.db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_detailed_timestamp
+            ON detailed_matches(timestamp)
+            """
+        )
+
+        await self.db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_detailed_profitable
+            ON detailed_matches(is_profitable)
+            """
+        )
+
+        await self.db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_detailed_pair_hash
+            ON detailed_matches(pair_hash, timestamp)
             """
         )
 
@@ -240,3 +321,120 @@ class Database:
             )
 
         return opportunities
+
+    async def insert_market_snapshot(
+        self,
+        cycle_duration_ms,
+        kalshi_markets_count,
+        predictit_markets_count,
+        total_matches,
+        profitable_matches,
+        near_miss_matches,
+        inverse_opportunities,
+        avg_price_correlation,
+        avg_similarity_score,
+        median_spread,
+        kalshi_api_healthy,
+        predictit_api_healthy,
+    ):
+        """Insert aggregated market snapshot for current cycle."""
+        if not self.db:
+            raise RuntimeError("Database not connected")
+
+        cursor = await self.db.execute(
+            """
+            INSERT INTO market_snapshots (
+                timestamp, cycle_duration_ms,
+                kalshi_markets_count, predictit_markets_count,
+                total_matches, profitable_matches, near_miss_matches,
+                inverse_opportunities, avg_price_correlation,
+                avg_similarity_score, median_spread,
+                kalshi_api_healthy, predictit_api_healthy
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now().isoformat(),
+                cycle_duration_ms,
+                kalshi_markets_count,
+                predictit_markets_count,
+                total_matches,
+                profitable_matches,
+                near_miss_matches,
+                inverse_opportunities,
+                avg_price_correlation,
+                avg_similarity_score,
+                median_spread,
+                kalshi_api_healthy,
+                predictit_api_healthy,
+            ),
+        )
+
+        await self.db.commit()
+        return cursor.lastrowid
+
+    async def insert_detailed_match(
+        self,
+        kalshi_market_id,
+        predictit_market_id,
+        event_description,
+        kalshi_price,
+        predictit_price,
+        gross_spread,
+        net_profit_pct,
+        similarity_score,
+        match_quality,
+        required_capital,
+        kalshi_fees,
+        predictit_fees,
+        total_fees,
+        is_profitable,
+        is_near_miss,
+        is_inverse,
+        direction,
+        kalshi_url,
+        predictit_url,
+        pair_hash,
+    ):
+        """Insert detailed match record for interesting opportunity."""
+        if not self.db:
+            raise RuntimeError("Database not connected")
+
+        cursor = await self.db.execute(
+            """
+            INSERT INTO detailed_matches (
+                timestamp, kalshi_market_id, predictit_market_id,
+                event_description, kalshi_price, predictit_price,
+                gross_spread, net_profit_pct, similarity_score,
+                match_quality, required_capital, kalshi_fees,
+                predictit_fees, total_fees, is_profitable,
+                is_near_miss, is_inverse, direction,
+                kalshi_url, predictit_url, pair_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now().isoformat(),
+                kalshi_market_id,
+                predictit_market_id,
+                event_description,
+                kalshi_price,
+                predictit_price,
+                gross_spread,
+                net_profit_pct,
+                similarity_score,
+                match_quality,
+                required_capital,
+                kalshi_fees,
+                predictit_fees,
+                total_fees,
+                is_profitable,
+                is_near_miss,
+                is_inverse,
+                direction,
+                kalshi_url,
+                predictit_url,
+                pair_hash,
+            ),
+        )
+
+        await self.db.commit()
+        return cursor.lastrowid

@@ -6,6 +6,7 @@ from pathlib import Path
 from time import time
 
 from .alerting.discord import DiscordAlerter
+from .analytics.collector import AnalyticsCollector
 from .arbitrage.calculator import calculate_arbitrage, calculate_inverse_arbitrage
 from .clients.kalshi import KalshiClient
 from .clients.predictit import PredictItClient
@@ -55,6 +56,8 @@ class ArbitrageMonitor:
         self.discord = DiscordAlerter(self.config)
 
         self.ui = TerminalUI(self.config)
+
+        self.analytics = AnalyticsCollector(self.database, self.config)
 
         # State
         self.running = False
@@ -150,6 +153,7 @@ class ArbitrageMonitor:
 
             opportunities = []
             monitor_opportunities = []
+            all_opportunities_for_analytics = []
 
             for match in matches:
                 # Try inverse arb first (betting opposite outcomes on each platform)
@@ -169,6 +173,9 @@ class ArbitrageMonitor:
                         polymarket_price=match.polymarket_market.price,
                         config=self.config,
                     )
+
+                # Record match for analytics (selective storage)
+                await self.analytics.record_match(match, opportunity)
 
                 if opportunity and opportunity.is_profitable:
                     tier = self.config.get_tier_for_capital(opportunity.required_capital)
@@ -205,6 +212,18 @@ class ArbitrageMonitor:
                     monitor_opportunities.append(
                         (match.kalshi_market, match.polymarket_market, opportunity, tier)
                     )
+
+            # Record cycle-level analytics
+            cycle_duration_ms = int((time() - cycle_start) * 1000)
+            await self.analytics.record_cycle(
+                kalshi_markets=kalshi_markets,
+                predictit_markets=predictit_markets,
+                matches=matches,
+                opportunities=opportunities,
+                cycle_duration_ms=cycle_duration_ms,
+                kalshi_api_healthy=kalshi_status.is_healthy,
+                predictit_api_healthy=predictit_status.is_healthy,
+            )
 
             self.ui.set_opportunities(opportunities)
             self.ui.add_log(f"Found {len(opportunities)} arbitrage opportunities")
