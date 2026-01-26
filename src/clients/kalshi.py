@@ -37,15 +37,20 @@ class KalshiClient(BaseClient):
 
             # Now fetch markets for each event
             all_markets = []
+            total_events = len(events)
 
             for i, event in enumerate(events):
                 event_ticker = event.get("event_ticker")
                 if not event_ticker:
                     continue
 
-                # Rate limiting
+                # Log progress every 20 events
+                if i > 0 and i % 20 == 0:
+                    logger.info(f"Kalshi: Processing event {i}/{total_events}...")
+
+                # Rate limiting (reduced to speed up polling)
                 if i > 0:
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.1)
 
                 markets_url = f"{self.BASE_URL}/markets"
                 markets_params = {

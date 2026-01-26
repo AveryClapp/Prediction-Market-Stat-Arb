@@ -107,11 +107,12 @@ class ArbitrageMonitor:
         try:
             # Poll Kalshi first
             logger.info("Polling Kalshi...")
-            self.ui.add_log("Polling Kalshi...")
+            self.ui.add_log("Polling Kalshi (this may take 1-2 min)...")
+            self.ui.update()
             kalshi_markets = await self.kalshi_client.get_active_markets()
             kalshi_status = self.kalshi_client.get_status()
             self.ui.set_platform_status(kalshi_status, None)
-            self.ui.add_log(f"Kalshi: {len(kalshi_markets)} markets")
+            self.ui.add_log(f"Kalshi: {len(kalshi_markets)} markets fetched")
             self.ui.update()
 
             if kalshi_status.consecutive_failures >= self.config.polling.max_retries:
