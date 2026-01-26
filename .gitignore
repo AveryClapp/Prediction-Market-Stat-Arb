@@ -212,6 +212,9 @@ __marimo__/
 # Project data
 data/
 
+# PID files
+*.pid
+
 # Configuration with API credentials
 config.yaml
 
