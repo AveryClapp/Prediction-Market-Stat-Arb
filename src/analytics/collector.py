@@ -86,13 +86,25 @@ class AnalyticsCollector:
     async def record_match(self, match: EventMatch, opportunity):
         """Selectively record interesting matches."""
 
-        if not self._is_interesting(opportunity):
-            return
-
         pair_hash = self._compute_pair_hash(
             match.kalshi_market.market_id,
             match.polymarket_market.market_id
         )
+
+        # Always record price history for spread evolution tracking
+        await self.database.insert_price_history(
+            pair_hash=pair_hash,
+            kalshi_market_id=match.kalshi_market.market_id,
+            predictit_market_id=match.polymarket_market.market_id,
+            event_description=match.kalshi_market.description,
+            kalshi_price=match.kalshi_market.price,
+            predictit_price=match.polymarket_market.price,
+            similarity_score=match.similarity_score,
+        )
+
+        # Only record detailed match if it's interesting
+        if not self._is_interesting(opportunity):
+            return
 
         # Check deduplication
         gross_spread = abs(match.kalshi_market.price - match.polymarket_market.price)

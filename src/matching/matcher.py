@@ -30,17 +30,37 @@ def parse_close_time(close_time_str: str) -> Optional[datetime]:
 
 
 def markets_expire_within_days(market1: Market, market2: Market, max_days_diff: int = 14) -> bool:
-    """Check if two markets expire within max_days_diff days of each other."""
+    """Check if two markets expire within max_days_diff days of each other.
+
+    Returns True if:
+    - Both have dates and they're within max_days_diff days
+    - One or both platforms don't provide dates (can't verify, so allow)
+
+    Returns False if:
+    - Both have dates but they differ by more than max_days_diff days
+    """
     time1 = parse_close_time(market1.close_time)
     time2 = parse_close_time(market2.close_time)
 
-    # If we can't parse either time, be conservative and reject the match
-    if time1 is None or time2 is None:
-        logger.debug(f"Could not parse close times: {market1.close_time} vs {market2.close_time}")
-        return False
+    # If both have valid dates, compare them
+    if time1 is not None and time2 is not None:
+        diff_days = abs((time1 - time2).days)
+        matches = diff_days <= max_days_diff
+        if not matches:
+            logger.debug(
+                f"Date mismatch: {diff_days} days apart "
+                f"({time1.strftime('%Y-%m-%d')} vs {time2.strftime('%Y-%m-%d')})"
+            )
+        return matches
 
-    diff_days = abs((time1 - time2).days)
-    return diff_days <= max_days_diff
+    # If one or both platforms don't provide dates, we can't verify
+    # Allow the match rather than rejecting it
+    logger.debug(
+        f"Missing date data, allowing match: "
+        f"{market1.platform}={market1.close_time or 'N/A'}, "
+        f"{market2.platform}={market2.close_time or 'N/A'}"
+    )
+    return True
 
 
 @dataclass
@@ -174,6 +194,17 @@ class EventMatcher:
             f"Phase 2: {len(matches)} matches found, {rejected_date_mismatch} rejected due to date mismatch "
             f"(threshold: {self.semantic_threshold})"
         )
+
+        # Log sample matches found
+        if len(matches) > 0:
+            logger.info(f"Sample matches found (showing up to 3):")
+            for i, match in enumerate(matches[:3]):
+                logger.info(
+                    f"  Match {i+1}: {match.kalshi_market.description[:50]}... "
+                    f"(Kalshi: {match.kalshi_market.price:.2f}, "
+                    f"PredictIt: {match.polymarket_market.price:.2f}, "
+                    f"Similarity: {match.similarity_score:.2f})"
+                )
 
         # Log some examples of rejected matches for diagnostics
         if rejected_date_mismatch > 0 and len(matches) == 0:

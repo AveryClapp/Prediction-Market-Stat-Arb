@@ -129,6 +129,24 @@ class Database:
             """
         )
 
+        # New: Price history for tracking spread evolution over time
+        await self.db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS price_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                pair_hash TEXT NOT NULL,
+                kalshi_market_id TEXT NOT NULL,
+                predictit_market_id TEXT NOT NULL,
+                event_description TEXT NOT NULL,
+                kalshi_price REAL NOT NULL,
+                predictit_price REAL NOT NULL,
+                spread REAL NOT NULL,
+                similarity_score REAL NOT NULL
+            )
+            """
+        )
+
         # Create indexes for fast queries
         await self.db.execute(
             """
@@ -169,6 +187,13 @@ class Database:
             """
             CREATE INDEX IF NOT EXISTS idx_detailed_pair_hash
             ON detailed_matches(pair_hash, timestamp)
+            """
+        )
+
+        await self.db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_price_history_pair
+            ON price_history(pair_hash, timestamp)
             """
         )
 
@@ -433,6 +458,46 @@ class Database:
                 kalshi_url,
                 predictit_url,
                 pair_hash,
+            ),
+        )
+
+        await self.db.commit()
+        return cursor.lastrowid
+
+    async def insert_price_history(
+        self,
+        pair_hash,
+        kalshi_market_id,
+        predictit_market_id,
+        event_description,
+        kalshi_price,
+        predictit_price,
+        similarity_score,
+    ):
+        """Insert price history record for tracking spread evolution."""
+        if not self.db:
+            raise RuntimeError("Database not connected")
+
+        spread = abs(kalshi_price - predictit_price)
+
+        cursor = await self.db.execute(
+            """
+            INSERT INTO price_history (
+                timestamp, pair_hash, kalshi_market_id, predictit_market_id,
+                event_description, kalshi_price, predictit_price,
+                spread, similarity_score
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now().isoformat(),
+                pair_hash,
+                kalshi_market_id,
+                predictit_market_id,
+                event_description,
+                kalshi_price,
+                predictit_price,
+                spread,
+                similarity_score,
             ),
         )
 
