@@ -62,6 +62,7 @@ class ArbitrageMonitor:
         # State
         self.running = False
         self.cycle_count = 0
+        self.cycle_start_time = None  # Track cycle start for real-time progress
 
     async def initialize(self):
         logger.info("Initializing arbitrage monitor...")
@@ -101,7 +102,7 @@ class ArbitrageMonitor:
 
         logger.info(f"=== Polling Cycle {self.cycle_count} ===")
         self.ui.add_log(f"Starting cycle {self.cycle_count}")
-        self.ui.set_cycle_progress(0)
+        self.ui.set_cycle_start_time(cycle_start)  # Set for real-time progress
         self.ui.update()
 
         try:
@@ -281,13 +282,11 @@ class ArbitrageMonitor:
 
             self.ui.update()
 
-            # Wait until next cycle with live progress bar
+            # Wait until next cycle (progress updates automatically via TUI refresh)
             for i in range(int(wait_time)):
                 if not self.running:
                     break
                 await asyncio.sleep(1)
-                self.ui.set_cycle_progress(int(cycle_duration) + i)
-                self.ui.update()
 
     async def run(self):
         self.running = True

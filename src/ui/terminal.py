@@ -3,6 +3,7 @@
 import logging
 from collections import deque
 from datetime import datetime
+from time import time
 from typing import Optional
 
 from rich.console import Console
@@ -47,6 +48,7 @@ class TerminalUI:
         self.polymarket_status: Optional[PlatformStatus] = None
         self.historical_stats: Optional[HistoricalStats] = None
         self.cycle_progress = 0  # 0-60 seconds
+        self.cycle_start_time = None  # Track for real-time progress calculation
         self.logs = deque(maxlen=10)  # Last 10 log messages
 
         # Live display
@@ -125,6 +127,15 @@ class TerminalUI:
         """
         self.cycle_progress = seconds
 
+    def set_cycle_start_time(self, start_time: float):
+        """
+        Set cycle start time for real-time progress calculation.
+
+        Args:
+            start_time: Time from time.time() when cycle started
+        """
+        self.cycle_start_time = start_time
+
     def _render(self) -> Layout:
         """
         Render the full UI layout.
@@ -181,8 +192,12 @@ class TerminalUI:
         else:
             poly_text += "[yellow]...[/yellow]"
 
-        # Cycle progress
-        cycle_text = f"Cycle: {self.cycle_progress}/{self.config.polling.interval_seconds}s"
+        # Cycle progress (calculate in real-time from cycle_start_time)
+        if self.cycle_start_time is not None:
+            elapsed = int(time() - self.cycle_start_time)
+            cycle_text = f"Cycle: {elapsed}/{self.config.polling.interval_seconds}s"
+        else:
+            cycle_text = f"Cycle: 0/{self.config.polling.interval_seconds}s"
 
         header_text = f"{kalshi_text} | {poly_text} | {cycle_text}"
 
