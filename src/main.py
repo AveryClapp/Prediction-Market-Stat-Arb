@@ -17,13 +17,12 @@ from .matching.filter import apply_filters, get_filter_summary
 from .storage.database import Database
 from .ui.terminal import TerminalUI
 
-# Configure logging
+# Configure logging (file only, not stdout to keep TUI clean)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler("arbitrage.log"),
-        logging.StreamHandler(),
     ],
 )
 logger = logging.getLogger(__name__)
