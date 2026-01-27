@@ -43,7 +43,7 @@ class TerminalUI:
         self.console = Console()
 
         # State tracking
-        self.active_opportunities: list[tuple[Market, Market, ArbitrageOpportunity, CapitalTier]] = []
+        self.active_opportunities: list[tuple[Market, Market, ArbitrageOpportunity, CapitalTier, float]] = []
         self.kalshi_status: Optional[PlatformStatus] = None
         self.polymarket_status: Optional[PlatformStatus] = None
         self.historical_stats: Optional[HistoricalStats] = None
@@ -86,13 +86,13 @@ class TerminalUI:
         self.logs.append(f"[{timestamp}] {message}")
 
     def set_opportunities(
-        self, opportunities: list[tuple[Market, Market, ArbitrageOpportunity, CapitalTier]]
+        self, opportunities: list[tuple[Market, Market, ArbitrageOpportunity, CapitalTier, float]]
     ):
         """
         Set active opportunities.
 
         Args:
-            opportunities: List of (kalshi_market, poly_market, opportunity, tier)
+            opportunities: List of (kalshi_market, poly_market, opportunity, tier, similarity_score)
         """
         self.active_opportunities = opportunities
 
@@ -168,38 +168,23 @@ class TerminalUI:
         kalshi_text = "Kalshi: "
         if self.kalshi_status:
             if self.kalshi_status.is_healthy:
-                time_ago = ""
-                if self.kalshi_status.last_success:
-                    delta = (datetime.now() - self.kalshi_status.last_success).total_seconds()
-                    time_ago = f" ({int(delta)}s ago)"
-                kalshi_text += f"[green]✓{time_ago}[/green]"
+                kalshi_text += "[green]✓ Online[/green]"
             else:
-                kalshi_text += f"[red]✗ ({self.kalshi_status.consecutive_failures} failures)[/red]"
+                kalshi_text += f"[red]✗ Down ({self.kalshi_status.consecutive_failures} failures)[/red]"
         else:
-            kalshi_text += "[yellow]...[/yellow]"
+            kalshi_text += "[yellow]Initializing...[/yellow]"
 
         # Polymarket status
         poly_text = "Polymarket: "
         if self.polymarket_status:
             if self.polymarket_status.is_healthy:
-                time_ago = ""
-                if self.polymarket_status.last_success:
-                    delta = (datetime.now() - self.polymarket_status.last_success).total_seconds()
-                    time_ago = f" ({int(delta)}s ago)"
-                poly_text += f"[green]✓{time_ago}[/green]"
+                poly_text += "[green]✓ Online[/green]"
             else:
-                poly_text += f"[red]✗ ({self.polymarket_status.consecutive_failures} failures)[/red]"
+                poly_text += f"[red]✗ Down ({self.polymarket_status.consecutive_failures} failures)[/red]"
         else:
-            poly_text += "[yellow]...[/yellow]"
+            poly_text += "[yellow]Initializing...[/yellow]"
 
-        # Cycle progress (calculate in real-time from cycle_start_time)
-        if self.cycle_start_time is not None:
-            elapsed = int(time() - self.cycle_start_time)
-            cycle_text = f"Cycle: {elapsed}/{self.config.polling.interval_seconds}s"
-        else:
-            cycle_text = f"Cycle: 0/{self.config.polling.interval_seconds}s"
-
-        header_text = f"{kalshi_text} | {poly_text} | {cycle_text}"
+        header_text = f"{kalshi_text} | {poly_text}"
 
         return Panel(
             Text.from_markup(header_text),
@@ -208,44 +193,89 @@ class TerminalUI:
         )
 
     def _render_opportunities(self) -> Panel:
-        """Render active opportunities table."""
-        table = Table(title=f"Active Opportunities ({len(self.active_opportunities)})")
+        """Render active opportunities table with clickable links."""
+        table = Table(
+            title=f"Active Opportunities ({len(self.active_opportunities)}) - Click URLs to open in browser",
+            show_lines=True,
+        )
 
         table.add_column("Tier", style="bold", width=4)
-        table.add_column("Event", style="cyan", max_width=40)
-        table.add_column("Profit", justify="right", style="green")
-        table.add_column("Capital", justify="right")
-        table.add_column("Kalshi", justify="right")
-        table.add_column("Poly", justify="right")
+        table.add_column("Event", style="cyan", max_width=28, no_wrap=False)
+        table.add_column("Type", style="magenta", width=8)
+        table.add_column("Profit", justify="right", style="green bold", width=7)
+        table.add_column("Match", justify="center", width=6)
+        table.add_column("Kalshi", justify="left", width=15)
+        table.add_column("Polymarket", justify="left", width=15)
 
-        for kalshi_market, poly_market, opportunity, tier in self.active_opportunities:
+        for kalshi_market, poly_market, opportunity, tier, similarity_score in self.active_opportunities:
             icon = TIER_ICONS.get(tier.color, "⚪")
             tier_label = f"{icon} {tier.name[0]}"
 
-            # Truncate event description
+            # Truncate event description with clickable link to Kalshi
             event = kalshi_market.description
-            if len(event) > 37:
-                event = event[:37] + "..."
+            if len(event) > 28:
+                event_text = event[:28] + "..."
+            else:
+                event_text = event
 
-            # Format values
+            # Make event clickable (links to Kalshi market)
+            event_link = Text.from_markup(f"[link={kalshi_market.url}]{event_text}[/link]")
+
+            # Format profit
             profit = f"{opportunity.net_profit_pct:.1f}%"
-            capital = f"${opportunity.required_capital:,.0f}"
-            kalshi_price = f"{opportunity.kalshi_price:.2f}"
-            poly_price = f"{opportunity.polymarket_price:.2f}"
+
+            # Format similarity score with color coding
+            if similarity_score >= 0.95:
+                match_display = f"[green]{similarity_score:.2f}[/green]"
+            elif similarity_score >= 0.85:
+                match_display = f"[yellow]{similarity_score:.2f}[/yellow]"
+            else:
+                match_display = f"[red]{similarity_score:.2f}[/red]"
+
+            # Determine trade type and create clickable actions
+            if opportunity.is_inverse:
+                trade_type = "Inverse"
+                kalshi_action = Text.from_markup(
+                    f"[link={kalshi_market.url}]Buy @{opportunity.kalshi_price:.2f}[/link]"
+                )
+                poly_action = Text.from_markup(
+                    f"[link={poly_market.url}]Buy @{opportunity.polymarket_price:.2f}[/link]"
+                )
+            elif opportunity.direction == "buy_kalshi_sell_poly":
+                trade_type = "K→P"
+                kalshi_action = Text.from_markup(
+                    f"[link={kalshi_market.url}]Buy @{opportunity.kalshi_price:.2f}[/link]"
+                )
+                poly_action = Text.from_markup(
+                    f"[link={poly_market.url}]Sell @{opportunity.polymarket_price:.2f}[/link]"
+                )
+            else:  # buy_poly_sell_kalshi
+                trade_type = "P→K"
+                kalshi_action = Text.from_markup(
+                    f"[link={kalshi_market.url}]Sell @{opportunity.kalshi_price:.2f}[/link]"
+                )
+                poly_action = Text.from_markup(
+                    f"[link={poly_market.url}]Buy @{opportunity.polymarket_price:.2f}[/link]"
+                )
 
             table.add_row(
                 tier_label,
-                event,
+                event_link,
+                trade_type,
                 profit,
-                capital,
-                kalshi_price,
-                poly_price,
+                Text.from_markup(match_display),
+                kalshi_action,
+                poly_action,
             )
 
         if not self.active_opportunities:
-            table.add_row("", "No opportunities found", "", "", "", "")
+            table.add_row("", "No opportunities found", "", "", "", "", "")
 
-        return Panel(table, border_style="green")
+        return Panel(
+            table,
+            border_style="green",
+            subtitle="💡 Cmd+Click (Mac) or Ctrl+Click (Windows/Linux) on links to open in browser"
+        )
 
     def _render_stats(self) -> Panel:
         """Render historical statistics."""

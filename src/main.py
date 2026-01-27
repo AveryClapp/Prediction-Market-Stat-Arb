@@ -197,7 +197,7 @@ class ArbitrageMonitor:
                     tier = self.config.get_tier_for_capital(opportunity.required_capital)
 
                     opportunities.append(
-                        (match.kalshi_market, match.polymarket_market, opportunity, tier)
+                        (match.kalshi_market, match.polymarket_market, opportunity, tier, match.similarity_score)
                     )
 
                     await self.database.insert_opportunity(
@@ -226,7 +226,7 @@ class ArbitrageMonitor:
                     # Not profitable yet, but close - worth keeping an eye on
                     tier = self.config.get_tier_for_capital(opportunity.required_capital)
                     monitor_opportunities.append(
-                        (match.kalshi_market, match.polymarket_market, opportunity, tier)
+                        (match.kalshi_market, match.polymarket_market, opportunity, tier, match.similarity_score)
                     )
 
             # Record cycle-level analytics
@@ -257,7 +257,7 @@ class ArbitrageMonitor:
 
             if monitor_opportunities:
                 logger.info(f"Monitoring {len(monitor_opportunities)} near-profitable opportunities")
-                for i, (k_market, p_market, opp, tier) in enumerate(monitor_opportunities[:5]):
+                for i, (k_market, p_market, opp, tier, sim_score) in enumerate(monitor_opportunities[:5]):
                     logger.info(
                         f"  Monitor #{i+1}: {opp.net_profit_pct:.2f}% profit "
                         f"({opp.net_profit_pct - self.config.thresholds.min_profit_pct:.2f}% below threshold)"
