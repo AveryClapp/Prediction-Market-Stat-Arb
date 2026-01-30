@@ -36,7 +36,7 @@ def apply_filters(matches: List[EventMatch], filters: EventFilters) -> List[Even
     for match in matches:
         # Combine both market descriptions for matching
         combined_text = (
-            f"{match.kalshi_market.description} {match.polymarket_market.description}"
+            f"{match.kalshi_market.description} {match.platform2_market.description}"
         ).lower()
 
         # Check if any keyword matches
@@ -62,7 +62,7 @@ def apply_filters(matches: List[EventMatch], filters: EventFilters) -> List[Even
         for match in filtered_matches[:3]:
             matched_keywords = [
                 kw for kw in filters.keywords
-                if kw in f"{match.kalshi_market.description} {match.polymarket_market.description}".lower()
+                if kw in f"{match.kalshi_market.description} {match.platform2_market.description}".lower()
             ]
             logger.debug(f"  - {match.kalshi_market.description[:50]}... [{', '.join(matched_keywords)}]")
 

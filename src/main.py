@@ -9,6 +9,7 @@ from .alerting.discord import DiscordAlerter
 from .analytics.collector import AnalyticsCollector
 from .arbitrage.calculator import calculate_arbitrage, calculate_inverse_arbitrage
 from .clients.kalshi import KalshiClient
+from .clients.polymarket import PolymarketClient
 from .clients.predictit import PredictItClient
 from .config import load_config
 from .matching.matcher import EventMatcher
@@ -41,6 +42,12 @@ class ArbitrageMonitor:
             backoff_base=self.config.polling.backoff_base,
         )
 
+        self.polymarket_client = PolymarketClient(
+            api_key=self.config.api_keys.polymarket_api_key,
+            max_retries=self.config.polling.max_retries,
+            backoff_base=self.config.polling.backoff_base,
+        )
+
         self.predictit_client = PredictItClient(
             max_retries=self.config.polling.max_retries,
             backoff_base=self.config.polling.backoff_base,
@@ -48,7 +55,7 @@ class ArbitrageMonitor:
 
         self.matcher = EventMatcher(
             keyword_threshold=0.2,  # 20% keyword overlap required
-            semantic_threshold=self.config.thresholds.match_similarity,  # 75% semantic similarity
+            semantic_threshold=self.config.thresholds.match_similarity,  # From config (default: 95%)
         )
 
         self.database = Database()
@@ -89,6 +96,7 @@ class ArbitrageMonitor:
                 logger.warning(f"{name} cleanup error: {e}")
 
         await safe_close(self.kalshi_client.close(), "Kalshi")
+        await safe_close(self.polymarket_client.close(), "Polymarket")
         await safe_close(self.predictit_client.close(), "PredictIt")
         await safe_close(self.discord.close(), "Discord")
         await safe_close(self.database.close(), "Database")
@@ -121,12 +129,26 @@ class ArbitrageMonitor:
                     "Kalshi", kalshi_status.consecutive_failures
                 )
 
+            # Then poll Polymarket
+            logger.info("Polling Polymarket...")
+            self.ui.add_log("Polling Polymarket...")
+            self.ui.update()
+            polymarket_markets = await self.polymarket_client.get_active_markets()
+            polymarket_status = self.polymarket_client.get_status()
+            self.ui.set_platform_status(kalshi_status, polymarket_status)
+            self.ui.add_log(f"Polymarket: {len(polymarket_markets)} markets fetched")
+            self.ui.update()
+
+            if polymarket_status.consecutive_failures >= self.config.polling.max_retries:
+                await self.discord.send_platform_down_alert(
+                    "Polymarket", polymarket_status.consecutive_failures
+                )
+
             # Then poll PredictIt
             logger.info("Polling PredictIt...")
             self.ui.add_log("Polling PredictIt...")
             predictit_markets = await self.predictit_client.get_active_markets()
             predictit_status = self.predictit_client.get_status()
-            self.ui.set_platform_status(kalshi_status, predictit_status)
             self.ui.add_log(f"PredictIt: {len(predictit_markets)} markets")
             self.ui.update()
 
@@ -135,19 +157,36 @@ class ArbitrageMonitor:
                     "PredictIt", predictit_status.consecutive_failures
                 )
 
-            # Can't match if we don't have data from both platforms
-            if not kalshi_markets or not predictit_markets:
-                logger.warning("Skipping cycle due to empty market data")
-                self.ui.add_log("Skipping cycle - no market data")
+            # Can't match if we don't have Kalshi data (primary platform)
+            if not kalshi_markets:
+                logger.warning("Skipping cycle - no Kalshi market data")
+                self.ui.add_log("Skipping cycle - no Kalshi data")
                 self.ui.update()
                 return
 
             # Find matching events across platforms
-            logger.info("Matching events...")
-            self.ui.add_log("Matching events...")
-            self.ui.update()
-            matches = self.matcher.match_events(kalshi_markets, predictit_markets)
-            self.ui.add_log(f"Found {len(matches)} event matches")
+            # Match Kalshi vs Polymarket (primary pair - better fees)
+            all_matches = []
+
+            if polymarket_markets:
+                logger.info("Matching Kalshi vs Polymarket...")
+                self.ui.add_log("Matching Kalshi vs Polymarket...")
+                self.ui.update()
+                polymarket_matches = self.matcher.match_events(kalshi_markets, polymarket_markets, "Polymarket")
+                all_matches.extend(polymarket_matches)
+                self.ui.add_log(f"Found {len(polymarket_matches)} Kalshi-Polymarket matches")
+
+            # Match Kalshi vs PredictIt (secondary pair - high fees, politics only)
+            if predictit_markets:
+                logger.info("Matching Kalshi vs PredictIt...")
+                self.ui.add_log("Matching Kalshi vs PredictIt...")
+                self.ui.update()
+                predictit_matches = self.matcher.match_events(kalshi_markets, predictit_markets, "PredictIt")
+                all_matches.extend(predictit_matches)
+                self.ui.add_log(f"Found {len(predictit_matches)} Kalshi-PredictIt matches")
+
+            matches = all_matches
+            self.ui.add_log(f"Total: {len(matches)} event matches across all platforms")
 
             # Apply keyword filters if enabled
             if self.config.filters.enabled:
@@ -175,19 +214,21 @@ class ArbitrageMonitor:
                 # Try inverse arb first (betting opposite outcomes on each platform)
                 opportunity = calculate_inverse_arbitrage(
                     kalshi_price=match.kalshi_market.price,
-                    polymarket_price=match.polymarket_market.price,
+                    polymarket_price=match.platform2_market.price,
                     kalshi_desc=match.kalshi_market.description,
-                    polymarket_desc=match.polymarket_market.description,
+                    polymarket_desc=match.platform2_market.description,
                     config=self.config,
-                    platform2_name="PredictIt",
+                    platform2_name=match.platform2_name,
+                    similarity_score=match.similarity_score,
                 )
 
                 # Fall back to regular arbitrage if inverse doesn't work
                 if opportunity is None:
                     opportunity = calculate_arbitrage(
                         kalshi_price=match.kalshi_market.price,
-                        polymarket_price=match.polymarket_market.price,
+                        polymarket_price=match.platform2_market.price,
                         config=self.config,
+                        similarity_score=match.similarity_score,
                     )
 
                 # Record match for analytics (selective storage)
@@ -196,48 +237,62 @@ class ArbitrageMonitor:
                 if opportunity and opportunity.is_profitable:
                     tier = self.config.get_tier_for_capital(opportunity.required_capital)
 
-                    opportunities.append(
-                        (match.kalshi_market, match.polymarket_market, opportunity, tier, match.similarity_score)
-                    )
+                    # Only alert on A-grade opportunities (95%+ similarity)
+                    # Lower grades are logged but not alerted
+                    if opportunity.quality_grade == "A":
+                        opportunities.append(
+                            (match.kalshi_market, match.platform2_market, opportunity, tier, match.similarity_score, match.platform2_name)
+                        )
 
-                    await self.database.insert_opportunity(
-                        kalshi_market_id=match.kalshi_market.market_id,
-                        polymarket_market_id=match.polymarket_market.market_id,
-                        event_description=match.kalshi_market.description,
-                        kalshi_price=opportunity.kalshi_price,
-                        polymarket_price=opportunity.polymarket_price,
-                        net_profit_pct=opportunity.net_profit_pct,
-                        required_capital=opportunity.required_capital,
-                        capital_tier=self.config.capital_tiers.index(tier),
-                        kalshi_url=match.kalshi_market.url,
-                        polymarket_url=match.polymarket_market.url,
-                        direction=opportunity.direction,
-                        similarity_score=match.similarity_score,
-                    )
+                        await self.database.insert_opportunity(
+                            kalshi_market_id=match.kalshi_market.market_id,
+                            polymarket_market_id=match.platform2_market.market_id,
+                            event_description=match.kalshi_market.description,
+                            kalshi_price=opportunity.kalshi_price,
+                            polymarket_price=opportunity.polymarket_price,
+                            net_profit_pct=opportunity.net_profit_pct,
+                            required_capital=opportunity.required_capital,
+                            capital_tier=self.config.capital_tiers.index(tier),
+                            kalshi_url=match.kalshi_market.url,
+                            polymarket_url=match.platform2_market.url,
+                            direction=opportunity.direction,
+                            similarity_score=match.similarity_score,
+                        )
 
-                    await self.discord.send_alert(
-                        kalshi_market=match.kalshi_market,
-                        polymarket_market=match.polymarket_market,
-                        opportunity=opportunity,
-                        tier=tier,
-                    )
+                        await self.discord.send_alert(
+                            kalshi_market=match.kalshi_market,
+                            platform2_market=match.platform2_market,
+                            platform2_name=match.platform2_name,
+                            opportunity=opportunity,
+                            tier=tier,
+                            similarity_score=match.similarity_score,
+                        )
+                    else:
+                        # Log lower-grade profitable opportunities for analysis
+                        logger.info(
+                            f"Grade-{opportunity.quality_grade} opportunity (not alerting): "
+                            f"{match.kalshi_market.description[:50]}... "
+                            f"({opportunity.net_profit_pct:.2f}% profit, {match.similarity_score:.2f} similarity)"
+                        )
 
                 elif opportunity and opportunity.monitor_opportunity:
                     # Not profitable yet, but close - worth keeping an eye on
                     tier = self.config.get_tier_for_capital(opportunity.required_capital)
                     monitor_opportunities.append(
-                        (match.kalshi_market, match.polymarket_market, opportunity, tier, match.similarity_score)
+                        (match.kalshi_market, match.platform2_market, opportunity, tier, match.similarity_score, match.platform2_name)
                     )
 
             # Record cycle-level analytics
             cycle_duration_ms = int((time() - cycle_start) * 1000)
             await self.analytics.record_cycle(
                 kalshi_markets=kalshi_markets,
+                polymarket_markets=polymarket_markets,
                 predictit_markets=predictit_markets,
                 matches=matches,
                 opportunities=opportunities,
                 cycle_duration_ms=cycle_duration_ms,
                 kalshi_api_healthy=kalshi_status.is_healthy,
+                polymarket_api_healthy=polymarket_status.is_healthy,
                 predictit_api_healthy=predictit_status.is_healthy,
             )
 
@@ -257,15 +312,15 @@ class ArbitrageMonitor:
 
             if monitor_opportunities:
                 logger.info(f"Monitoring {len(monitor_opportunities)} near-profitable opportunities")
-                for i, (k_market, p_market, opp, tier, sim_score) in enumerate(monitor_opportunities[:5]):
+                for i, (k_market, p2_market, opp, tier, sim_score, p2_name) in enumerate(monitor_opportunities[:5]):
                     logger.info(
                         f"  Monitor #{i+1}: {opp.net_profit_pct:.2f}% profit "
                         f"({opp.net_profit_pct - self.config.thresholds.min_profit_pct:.2f}% below threshold)"
                     )
                     if opp.is_inverse:
                         logger.info(f"    INVERSE: Combined cost ${opp.combined_cost:.2f}")
-                    logger.info(f"    {k_market.description[:60]}...")
-                    logger.info(f"    {p_market.description[:60]}...")
+                    logger.info(f"    Kalshi: {k_market.description[:60]}...")
+                    logger.info(f"    {p2_name}: {p2_market.description[:60]}...")
 
         except Exception as e:
             logger.error(f"Error during polling cycle: {e}", exc_info=True)

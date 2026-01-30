@@ -91,7 +91,7 @@ def parse_close_time(close_time_str: str) -> Optional[datetime]:
             return None
 
 
-def markets_expire_within_days(market1: Market, market2: Market, max_days_diff: int = 14) -> bool:
+def markets_expire_within_days(market1: Market, market2: Market, max_days_diff: int = 7) -> bool:
     """Check if two markets expire within max_days_diff days of each other.
 
     Returns True if:
@@ -100,6 +100,8 @@ def markets_expire_within_days(market1: Market, market2: Market, max_days_diff: 
 
     Returns False if:
     - Both have dates but they differ by more than max_days_diff days
+
+    Default: 7 days (stricter than previous 14 days for higher precision)
     """
     # Try to get dates from API first
     time1 = parse_close_time(market1.close_time)
@@ -180,10 +182,11 @@ def has_action_verb_mismatch(desc1: str, desc2: str) -> bool:
 @dataclass
 class EventMatch:
     kalshi_market: Market
-    polymarket_market: Market
+    platform2_market: Market  # Second platform (Polymarket or PredictIt)
+    platform2_name: str  # Name of second platform ("Polymarket" or "PredictIt")
     similarity_score: float
     normalized_kalshi: str
-    normalized_polymarket: str
+    normalized_platform2: str  # Normalized description of platform2
 
 
 class EventMatcher:
@@ -215,7 +218,7 @@ class EventMatcher:
         return self._embedding_cache[text]
 
     def _phase1_keyword_filter(
-        self, kalshi_markets: list[Market], polymarket_markets: list[Market]
+        self, kalshi_markets: list[Market], platform2_markets: list[Market]
     ) -> list[tuple[Market, Market, float]]:
         """
         Phase 1: Fast keyword-based filtering.
@@ -224,28 +227,28 @@ class EventMatcher:
 
         Args:
             kalshi_markets: Markets from Kalshi
-            polymarket_markets: Markets from Polymarket
+            platform2_markets: Markets from second platform
 
         Returns:
-            List of (kalshi_market, polymarket_market, keyword_overlap) tuples
+            List of (kalshi_market, platform2_market, keyword_overlap) tuples
         """
         candidates = []
 
         # Normalize all descriptions once
         kalshi_normalized = [(m, normalize_text(m.description)) for m in kalshi_markets]
-        polymarket_normalized = [
-            (m, normalize_text(m.description)) for m in polymarket_markets
+        platform2_normalized = [
+            (m, normalize_text(m.description)) for m in platform2_markets
         ]
 
         # Compare all pairs
         for kalshi_market, kalshi_text in kalshi_normalized:
-            for polymarket_market, polymarket_text in polymarket_normalized:
+            for platform2_market, platform2_text in platform2_normalized:
                 # Calculate keyword overlap
-                overlap = calculate_keyword_overlap(kalshi_text, polymarket_text)
+                overlap = calculate_keyword_overlap(kalshi_text, platform2_text)
 
                 # Only keep pairs above threshold
                 if overlap >= self.keyword_threshold:
-                    candidates.append((kalshi_market, polymarket_market, overlap))
+                    candidates.append((kalshi_market, platform2_market, overlap))
 
         logger.info(
             f"Phase 1: {len(candidates)} candidates pass keyword filter "
@@ -255,13 +258,14 @@ class EventMatcher:
         return candidates
 
     def _phase2_semantic_matching(
-        self, candidates: list[tuple[Market, Market, float]]
+        self, candidates: list[tuple[Market, Market, float]], platform2_name: str
     ) -> list[EventMatch]:
         """
         Phase 2: Semantic similarity matching on filtered candidates.
 
         Args:
             candidates: Filtered candidate pairs from phase 1
+            platform2_name: Name of second platform ("Polymarket" or "PredictIt")
 
         Returns:
             List of EventMatch objects with similarity >= semantic_threshold
@@ -270,48 +274,49 @@ class EventMatcher:
         rejected_date_mismatch = 0
         rejected_action_mismatch = 0
 
-        for kalshi_market, polymarket_market, keyword_overlap in candidates:
+        for kalshi_market, platform2_market, keyword_overlap in candidates:
             # Get normalized text
             kalshi_text = normalize_text(kalshi_market.description)
-            polymarket_text = normalize_text(polymarket_market.description)
+            platform2_text = normalize_text(platform2_market.description)
 
             # Get embeddings (cached)
             kalshi_embedding = self._get_embedding(kalshi_text)
-            polymarket_embedding = self._get_embedding(polymarket_text)
+            platform2_embedding = self._get_embedding(platform2_text)
 
             # Calculate cosine similarity
             similarity = cosine_similarity(
-                [kalshi_embedding], [polymarket_embedding]
+                [kalshi_embedding], [platform2_embedding]
             )[0][0]
 
             # Check if similarity meets threshold
             if similarity >= self.semantic_threshold:
-                # Filter out matches with significantly different expiration dates
-                if not markets_expire_within_days(kalshi_market, polymarket_market, max_days_diff=14):
+                # Filter out matches with different expiration dates (strict: 7 days)
+                if not markets_expire_within_days(kalshi_market, platform2_market, max_days_diff=7):
                     rejected_date_mismatch += 1
                     logger.debug(
                         f"Rejected match due to different expiration dates: "
                         f"{kalshi_market.description[:50]} ({kalshi_market.close_time}) vs "
-                        f"{polymarket_market.description[:50]} ({polymarket_market.close_time})"
+                        f"{platform2_market.description[:50]} ({platform2_market.close_time})"
                     )
                     continue
 
                 # Filter out matches with conflicting action verbs
-                if has_action_verb_mismatch(kalshi_market.description, polymarket_market.description):
+                if has_action_verb_mismatch(kalshi_market.description, platform2_market.description):
                     rejected_action_mismatch += 1
                     logger.debug(
                         f"Rejected match due to action verb mismatch: "
                         f"{kalshi_market.description[:50]}... vs "
-                        f"{polymarket_market.description[:50]}..."
+                        f"{platform2_market.description[:50]}..."
                     )
                     continue
 
                 match = EventMatch(
                     kalshi_market=kalshi_market,
-                    polymarket_market=polymarket_market,
+                    platform2_market=platform2_market,
+                    platform2_name=platform2_name,
                     similarity_score=float(similarity),
                     normalized_kalshi=kalshi_text,
-                    normalized_polymarket=polymarket_text,
+                    normalized_platform2=platform2_text,
                 )
                 matches.append(match)
 
@@ -329,7 +334,7 @@ class EventMatcher:
                 logger.info(
                     f"  Match {i+1}: {match.kalshi_market.description[:50]}... "
                     f"(Kalshi: {match.kalshi_market.price:.2f}, "
-                    f"PredictIt: {match.polymarket_market.price:.2f}, "
+                    f"{match.platform2_name}: {match.platform2_market.price:.2f}, "
                     f"Similarity: {match.similarity_score:.2f})"
                 )
 
@@ -337,18 +342,18 @@ class EventMatcher:
         if rejected_date_mismatch > 0 and len(matches) == 0:
             logger.info("Examples of rejected matches (different expiration dates):")
             count = 0
-            for kalshi_market, polymarket_market, _ in candidates[:5]:
+            for kalshi_market, platform2_market, _ in candidates[:5]:
                 kalshi_text = normalize_text(kalshi_market.description)
-                polymarket_text = normalize_text(polymarket_market.description)
+                platform2_text = normalize_text(platform2_market.description)
                 kalshi_embedding = self._get_embedding(kalshi_text)
-                polymarket_embedding = self._get_embedding(polymarket_text)
-                similarity = cosine_similarity([kalshi_embedding], [polymarket_embedding])[0][0]
+                platform2_embedding = self._get_embedding(platform2_text)
+                similarity = cosine_similarity([kalshi_embedding], [platform2_embedding])[0][0]
 
                 if similarity >= self.semantic_threshold:
                     logger.info(
                         f"  - Similarity {similarity:.2f}: {kalshi_market.description[:50]}... "
-                        f"({kalshi_market.close_time[:10]}) vs {polymarket_market.description[:50]}... "
-                        f"({polymarket_market.close_time[:10]})"
+                        f"({kalshi_market.close_time[:10]}) vs {platform2_market.description[:50]}... "
+                        f"({platform2_market.close_time[:10]})"
                     )
                     count += 1
                     if count >= 3:
@@ -357,36 +362,37 @@ class EventMatcher:
         return matches
 
     def match_events(
-        self, kalshi_markets: list[Market], polymarket_markets: list[Market]
+        self, kalshi_markets: list[Market], platform2_markets: list[Market], platform2_name: str = "Polymarket"
     ) -> list[EventMatch]:
         """
         Match events across platforms using hybrid two-phase approach.
 
         Args:
             kalshi_markets: Markets from Kalshi
-            polymarket_markets: Markets from Polymarket
+            platform2_markets: Markets from second platform (Polymarket or PredictIt)
+            platform2_name: Name of second platform ("Polymarket" or "PredictIt")
 
         Returns:
             List of matched event pairs
         """
-        if not kalshi_markets or not polymarket_markets:
+        if not kalshi_markets or not platform2_markets:
             logger.warning("Empty market list provided to matcher")
             return []
 
         logger.info(
             f"Matching {len(kalshi_markets)} Kalshi markets "
-            f"against {len(polymarket_markets)} Polymarket markets"
+            f"against {len(platform2_markets)} {platform2_name} markets"
         )
 
         # Phase 1: Keyword filtering
-        candidates = self._phase1_keyword_filter(kalshi_markets, polymarket_markets)
+        candidates = self._phase1_keyword_filter(kalshi_markets, platform2_markets)
 
         if not candidates:
             logger.info("No candidates passed keyword filter")
             return []
 
         # Phase 2: Semantic matching
-        matches = self._phase2_semantic_matching(candidates)
+        matches = self._phase2_semantic_matching(candidates, platform2_name)
 
         return matches
 

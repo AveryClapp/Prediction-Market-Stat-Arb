@@ -1,7 +1,36 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from ..config import Config
+
+logger = logging.getLogger(__name__)
+
+
+def calculate_quality_grade(similarity_score: float) -> str:
+    """
+    Calculate quality grade based on similarity score.
+
+    Quality grades:
+    - A: 95-100% similarity (very high confidence, auto-alert)
+    - B: 90-95% similarity (high confidence, alert with warning)
+    - C: 85-90% similarity (medium confidence, log only)
+    - D: <85% similarity (low confidence, reject)
+
+    Args:
+        similarity_score: Semantic similarity score (0-1)
+
+    Returns:
+        Quality grade (A, B, C, or D)
+    """
+    if similarity_score >= 0.95:
+        return "A"
+    elif similarity_score >= 0.90:
+        return "B"
+    elif similarity_score >= 0.85:
+        return "C"
+    else:
+        return "D"
 
 
 @dataclass
@@ -16,24 +45,41 @@ class ArbitrageOpportunity:
     polymarket_fees: float
     total_fees: float
     is_profitable: bool
+    quality_grade: str = "C"  # A, B, C, or D based on similarity and validation
     is_inverse: bool = False  # betting opposite outcomes
     combined_cost: Optional[float] = None  # for inverse arb
     monitor_opportunity: bool = False  # close to profitable
 
 
-def is_inverse_market(desc1, desc2, price1, price2):
+def is_inverse_market(desc1, desc2, price1, price2, similarity_score=None):
     """
     Check if two markets are opposites (e.g. "Dems win" vs "Reps win").
-    Uses price sums (~1.0) and pattern matching.
+
+    STRICT REQUIREMENTS (ALL must be true):
+    1. Prices sum to 0.95-1.05 (tighter bounds to prevent false positives)
+    2. Explicit pattern match (dem/rep, yes/no, over/under)
+    3. High similarity score if provided (95%+)
+
+    Args:
+        desc1: First market description
+        desc2: Second market description
+        price1: First market price (0-1)
+        price2: Second market price (0-1)
+        similarity_score: Optional semantic similarity (0-1)
+
+    Returns:
+        True if markets are confirmed inverses, False otherwise
     """
     desc1_lower = desc1.lower()
     desc2_lower = desc2.lower()
 
-    # Price check: if prices sum to ~1.0, one must win
+    # REQUIREMENT 1: Strict price sum validation
+    # Prices MUST sum to ~1.0 (within tight bounds)
     price_sum = price1 + price2
-    prices_suggest_inverse = 0.85 <= price_sum <= 1.15
+    if not (0.95 <= price_sum <= 1.05):
+        return False  # Not inverse if prices don't sum to 1.0
 
-    # Pattern matching for common inverse types
+    # REQUIREMENT 2: Explicit pattern match required
     pattern_suggests_inverse = False
 
     # Political parties
@@ -64,22 +110,27 @@ def is_inverse_market(desc1, desc2, price1, price2):
     elif (has_under_1 and not has_over_1 and has_over_2 and not has_under_2):
         pattern_suggests_inverse = True
 
-    if prices_suggest_inverse and pattern_suggests_inverse:
-        return True  # Strong confidence - both signals agree
+    # Win/Lose pairs
+    has_win_1 = " win" in desc1_lower or " wins" in desc1_lower
+    has_lose_1 = " lose" in desc1_lower or " loses" in desc1_lower
+    has_win_2 = " win" in desc2_lower or " wins" in desc2_lower
+    has_lose_2 = " lose" in desc2_lower or " loses" in desc2_lower
 
-    if prices_suggest_inverse:
-        # Prices sum to ~1.0, which is strong evidence even without pattern match
-        # This catches all types of binary markets (sports, entertainment, etc.)
-        # Only exception: if prices are both very high (0.9 + 0.9 = 1.8) or both very low
-        if price_sum < 1.15:  # Tighter bound for price-only detection
-            return True
+    if (has_win_1 and not has_lose_1 and has_lose_2 and not has_win_2):
+        pattern_suggests_inverse = True
+    elif (has_lose_1 and not has_win_1 and has_win_2 and not has_lose_2):
+        pattern_suggests_inverse = True
 
-    if pattern_suggests_inverse:
-        # Clear pattern detected, even if prices don't perfectly sum to 1.0
-        # (market inefficiency is real)
-        return True
+    # Must have explicit pattern match
+    if not pattern_suggests_inverse:
+        return False
 
-    return False
+    # REQUIREMENT 3: High similarity if provided
+    if similarity_score is not None and similarity_score < 0.95:
+        return False  # Markets must be highly similar (about same event)
+
+    # All requirements met
+    return True
 
 
 def calculate_fees(
@@ -145,6 +196,7 @@ def calculate_inverse_arbitrage(
     polymarket_desc: str,
     config: Config,
     platform2_name: str = "Polymarket",
+    similarity_score: Optional[float] = None,
 ) -> Optional[ArbitrageOpportunity]:
     """
     Calculate inverse arbitrage opportunity (betting opposite outcomes).
@@ -160,16 +212,22 @@ def calculate_inverse_arbitrage(
         polymarket_desc: Second platform description
         config: Configuration with fee structures and thresholds
         platform2_name: Name of second platform ("Polymarket" or "PredictIt")
+        similarity_score: Semantic similarity between markets (0-1), required to be ≥0.95
 
     Returns:
         ArbitrageOpportunity or None if not inverse or not profitable
     """
-    # Check if markets are inverses
-    if not is_inverse_market(kalshi_desc, polymarket_desc, kalshi_price, polymarket_price):
+    # Check if markets are inverses (strict validation)
+    if not is_inverse_market(kalshi_desc, polymarket_desc, kalshi_price, polymarket_price, similarity_score):
+        logger.debug(
+            f"REJECT_INVERSE: Not inverse markets "
+            f"(sum={kalshi_price + polymarket_price:.2f}, sim={similarity_score:.2f if similarity_score else 'N/A'})"
+        )
         return None
 
-    # Validate prices
-    if not (0.01 <= kalshi_price <= 0.99) or not (0.01 <= polymarket_price <= 0.99):
+    # VALIDATION: Strict price sanity checks (same as regular arbitrage)
+    if not (0.05 <= kalshi_price <= 0.95) or not (0.05 <= polymarket_price <= 0.95):
+        logger.debug(f"REJECT_PRICE_SANITY (inverse): Prices outside 0.05-0.95 range")
         return None
 
     # For inverse arbitrage, we buy BOTH positions
@@ -228,6 +286,9 @@ def calculate_inverse_arbitrage(
         and net_profit_pct >= (config.thresholds.min_profit_pct - config.thresholds.monitor_threshold_pct)
     )
 
+    # Calculate quality grade from similarity score
+    quality_grade = calculate_quality_grade(similarity_score) if similarity_score is not None else "C"
+
     return ArbitrageOpportunity(
         direction="inverse_arbitrage",
         net_profit_pct=net_profit_pct,
@@ -239,6 +300,7 @@ def calculate_inverse_arbitrage(
         polymarket_fees=polymarket_fees,
         total_fees=kalshi_fees + polymarket_fees,
         is_profitable=is_profitable,
+        quality_grade=quality_grade,
         is_inverse=True,
         combined_cost=combined_cost,
         monitor_opportunity=monitor_opportunity,
@@ -246,7 +308,7 @@ def calculate_inverse_arbitrage(
 
 
 def calculate_arbitrage(
-    kalshi_price: float, polymarket_price: float, config: Config
+    kalshi_price: float, polymarket_price: float, config: Config, similarity_score: Optional[float] = None
 ) -> Optional[ArbitrageOpportunity]:
     """
     Calculate arbitrage opportunity between two markets.
@@ -261,8 +323,17 @@ def calculate_arbitrage(
     Returns:
         ArbitrageOpportunity or None if no profitable arbitrage exists
     """
-    # Validate prices
-    if not (0.01 <= kalshi_price <= 0.99) or not (0.01 <= polymarket_price <= 0.99):
+    # VALIDATION 1: Strict price sanity checks
+    # Reject edge cases (too close to 0 or 1)
+    if not (0.05 <= kalshi_price <= 0.95) or not (0.05 <= polymarket_price <= 0.95):
+        logger.debug(f"REJECT_PRICE_SANITY: Prices outside 0.05-0.95 range (K:{kalshi_price:.2f}, P:{polymarket_price:.2f})")
+        return None
+
+    # VALIDATION 2: Minimum spread requirement
+    # Below 5% spread, fees consume all profit
+    price_spread = abs(kalshi_price - polymarket_price)
+    if price_spread < 0.05:
+        logger.debug(f"REJECT_SPREAD: Price spread {price_spread:.2%} below 5% minimum")
         return None
 
     # For standardized calculation, use $1000 position size
@@ -298,6 +369,8 @@ def calculate_arbitrage(
             and net_profit_pct1 >= (config.thresholds.min_profit_pct - config.thresholds.monitor_threshold_pct)
         )
 
+        quality_grade1 = calculate_quality_grade(similarity_score) if similarity_score is not None else "C"
+
         direction1_opportunity = ArbitrageOpportunity(
             direction="buy_kalshi_sell_poly",
             net_profit_pct=net_profit_pct1,
@@ -309,6 +382,7 @@ def calculate_arbitrage(
             polymarket_fees=poly_fees1,
             total_fees=kalshi_fees1 + poly_fees1,
             is_profitable=is_profitable1,
+            quality_grade=quality_grade1,
             monitor_opportunity=monitor_opportunity1,
         )
 
@@ -342,6 +416,8 @@ def calculate_arbitrage(
             and net_profit_pct2 >= (config.thresholds.min_profit_pct - config.thresholds.monitor_threshold_pct)
         )
 
+        quality_grade2 = calculate_quality_grade(similarity_score) if similarity_score is not None else "C"
+
         direction2_opportunity = ArbitrageOpportunity(
             direction="buy_poly_sell_kalshi",
             net_profit_pct=net_profit_pct2,
@@ -353,6 +429,7 @@ def calculate_arbitrage(
             polymarket_fees=poly_fees2,
             total_fees=kalshi_fees2 + poly_fees2,
             is_profitable=is_profitable2,
+            quality_grade=quality_grade2,
             monitor_opportunity=monitor_opportunity2,
         )
 

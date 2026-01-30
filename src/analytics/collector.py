@@ -24,11 +24,13 @@ class AnalyticsCollector:
     async def record_cycle(
         self,
         kalshi_markets,
+        platform2_markets,
         predictit_markets,
         matches,
         opportunities,
         cycle_duration_ms,
         kalshi_api_healthy,
+        polymarket_api_healthy,
         predictit_api_healthy,
     ):
         """Record aggregated stats for this polling cycle."""
@@ -53,13 +55,13 @@ class AnalyticsCollector:
 
             # Price correlation
             kalshi_prices = [m.kalshi_market.price for m in matches]
-            predictit_prices = [m.polymarket_market.price for m in matches]
+            predictit_prices = [m.platform2_market.price for m in matches]
 
             if len(kalshi_prices) > 1:
                 avg_correlation = np.corrcoef(kalshi_prices, predictit_prices)[0, 1]
 
             # Median spread
-            spreads = [abs(m.kalshi_market.price - m.polymarket_market.price) for m in matches]
+            spreads = [abs(m.kalshi_market.price - m.platform2_market.price) for m in matches]
             median_spread = np.median(spreads)
 
         # Insert snapshot
@@ -88,17 +90,17 @@ class AnalyticsCollector:
 
         pair_hash = self._compute_pair_hash(
             match.kalshi_market.market_id,
-            match.polymarket_market.market_id
+            match.platform2_market.market_id
         )
 
         # Always record price history for spread evolution tracking
         await self.database.insert_price_history(
             pair_hash=pair_hash,
             kalshi_market_id=match.kalshi_market.market_id,
-            predictit_market_id=match.polymarket_market.market_id,
+            predictit_market_id=match.platform2_market.market_id,
             event_description=match.kalshi_market.description,
             kalshi_price=match.kalshi_market.price,
-            predictit_price=match.polymarket_market.price,
+            predictit_price=match.platform2_market.price,
             similarity_score=match.similarity_score,
         )
 
@@ -107,7 +109,7 @@ class AnalyticsCollector:
             return
 
         # Check deduplication
-        gross_spread = abs(match.kalshi_market.price - match.polymarket_market.price)
+        gross_spread = abs(match.kalshi_market.price - match.platform2_market.price)
 
         if not self._should_record(pair_hash, gross_spread):
             return
@@ -149,10 +151,10 @@ class AnalyticsCollector:
         # Insert detailed match
         await self.database.insert_detailed_match(
             kalshi_market_id=match.kalshi_market.market_id,
-            predictit_market_id=match.polymarket_market.market_id,
+            predictit_market_id=match.platform2_market.market_id,
             event_description=match.kalshi_market.description,
             kalshi_price=match.kalshi_market.price,
-            predictit_price=match.polymarket_market.price,
+            predictit_price=match.platform2_market.price,
             gross_spread=gross_spread,
             net_profit_pct=net_profit_pct,
             similarity_score=match.similarity_score,
@@ -166,7 +168,7 @@ class AnalyticsCollector:
             is_inverse=is_inverse,
             direction=direction,
             kalshi_url=match.kalshi_market.url,
-            predictit_url=match.polymarket_market.url,
+            predictit_url=match.platform2_market.url,
             pair_hash=pair_hash,
         )
 

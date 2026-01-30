@@ -33,9 +33,9 @@ thresholds:
   min_profit_pct: 3.0
 
   # Semantic similarity threshold for event matching (0-1)
-  # Higher = more conservative matching
-  # 0.80 provides high-quality matches while catching most true arbitrage opportunities
-  match_similarity: 0.80
+  # Higher = more conservative matching, fewer false positives
+  # 0.95 provides very high precision - only alerts on highly confident matches
+  match_similarity: 0.95
 
   # Near-arbitrage monitoring threshold (percentage points away from profitable)
   # e.g., 2.0 means alert on opportunities within 2% of being profitable

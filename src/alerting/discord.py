@@ -49,16 +49,19 @@ class DiscordAlerter:
     def _create_embed(
         self,
         kalshi_market: Market,
-        polymarket_market: Market,
+        platform2_market: Market,
+        platform2_name: str,
         opportunity: ArbitrageOpportunity,
         tier: CapitalTier,
+        similarity_score: float,
     ) -> dict:
         """
         Create Discord embed for arbitrage opportunity.
 
         Args:
             kalshi_market: Kalshi market
-            polymarket_market: Polymarket market
+            platform2_market: Second platform market
+            platform2_name: Name of second platform ("Polymarket" or "PredictIt")
             opportunity: Arbitrage opportunity details
             tier: Capital tier
 
@@ -71,23 +74,28 @@ class DiscordAlerter:
 
         # Format prices as percentages
         kalshi_pct = int(opportunity.kalshi_price * 100)
-        poly_pct = int(opportunity.polymarket_price * 100)
+        platform2_pct = int(opportunity.polymarket_price * 100)
 
         # Determine direction text
         if opportunity.direction == "buy_kalshi_sell_poly":
-            direction_text = f"Buy Kalshi ({kalshi_pct}%) → Sell Polymarket ({poly_pct}%)"
-        else:
-            direction_text = f"Buy Polymarket ({poly_pct}%) → Sell Kalshi ({kalshi_pct}%)"
+            direction_text = f"Buy Kalshi ({kalshi_pct}%) → Sell {platform2_name} ({platform2_pct}%)"
+        elif opportunity.direction == "buy_poly_sell_kalshi":
+            direction_text = f"Buy {platform2_name} ({platform2_pct}%) → Sell Kalshi ({kalshi_pct}%)"
+        else:  # inverse_arbitrage
+            direction_text = f"INVERSE: Buy BOTH (combined cost {opportunity.combined_cost:.2f})"
 
         # Format capital with commas
         capital_str = f"${opportunity.required_capital:,.2f}"
         profit_str = f"{opportunity.net_profit_pct:.2f}%"
 
         # Build embed
+        similarity_pct = f"{similarity_score * 100:.1f}%" if similarity_score else "N/A"
+
         embed = {
-            "title": f"{icon} {tier.name} Opportunity Detected",
+            "title": f"{icon} {opportunity.quality_grade}-Grade {tier.name} Opportunity",
             "description": (
                 f"**Event:** {kalshi_market.description[:200]}\n\n"
+                f"**Quality:** Grade {opportunity.quality_grade} | Similarity: {similarity_pct}\n"
                 f"**Direction:** {direction_text}\n"
                 f"**Net Profit:** {profit_str}\n"
                 f"**Required Capital:** {capital_str}\n"
@@ -100,22 +108,22 @@ class DiscordAlerter:
                     "inline": True,
                 },
                 {
-                    "name": "Polymarket",
-                    "value": f"[View Market]({polymarket_market.url})",
+                    "name": platform2_name,
+                    "value": f"[View Market]({platform2_market.url})",
                     "inline": True,
                 },
                 {
                     "name": "Fees Breakdown",
                     "value": (
                         f"Kalshi: ${opportunity.kalshi_fees:.2f}\n"
-                        f"Polymarket: ${opportunity.polymarket_fees:.2f}\n"
+                        f"{platform2_name}: ${opportunity.polymarket_fees:.2f}\n"
                         f"Total: ${opportunity.total_fees:.2f}"
                     ),
                     "inline": False,
                 },
             ],
             "timestamp": datetime.now().isoformat(),
-            "footer": {"text": "Prediction Market Arbitrage Monitor"},
+            "footer": {"text": "⚠️ EDUCATIONAL ONLY - NOT TRADING ADVICE"},
         }
 
         return embed
@@ -123,18 +131,22 @@ class DiscordAlerter:
     async def send_alert(
         self,
         kalshi_market: Market,
-        polymarket_market: Market,
+        platform2_market: Market,
+        platform2_name: str,
         opportunity: ArbitrageOpportunity,
         tier: CapitalTier,
+        similarity_score: float = None,
     ) -> bool:
         """
         Send Discord alert for arbitrage opportunity.
 
         Args:
             kalshi_market: Kalshi market
-            polymarket_market: Polymarket market
+            platform2_market: Second platform market
+            platform2_name: Name of second platform ("Polymarket" or "PredictIt")
             opportunity: Arbitrage opportunity details
             tier: Capital tier
+            similarity_score: Match similarity score (0-1)
 
         Returns:
             True if alert sent successfully, False otherwise
@@ -148,7 +160,7 @@ class DiscordAlerter:
             return False
 
         # Create embed
-        embed = self._create_embed(kalshi_market, polymarket_market, opportunity, tier)
+        embed = self._create_embed(kalshi_market, platform2_market, platform2_name, opportunity, tier, similarity_score)
 
         # Send to Discord
         payload = {"embeds": [embed]}
